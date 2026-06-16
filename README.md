@@ -9,6 +9,7 @@ This is a Vercel-ready Next.js app for creating ShipHero lots from a CSV.
 - Keeps the browser session updated when ShipHero rotates the refresh token.
 - Can use a direct ShipHero access token for short emergency runs.
 - Skips rows already marked as created in the current browser session when rerunning the same CSV.
+- Checks ShipHero for existing matching lots before live creation when `Skip existing in ShipHero` is on.
 - Verifies the token with ShipHero and shows the connected email, user ID, account ID, and request ID.
 - Downloads a CSV template with the accepted columns.
 - Uploads a CSV, validates rows in dry-run mode, then creates lots in live mode.
@@ -67,9 +68,11 @@ Access token mode skips the refresh-token exchange and sends the pasted access t
 
 ## Retrying after a partial upload
 
-If a live upload partially succeeds and then errors, keep the page open. The app remembers rows that returned `CREATED` in that browser session and skips them on the next live run, so rerunning the same CSV retries the remaining rows only.
+Live uploads default to `Skip existing in ShipHero`, which checks `expiration_lots` by SKU and skips matching lots before creating. A match is same lot name, same SKU, and same expiration when expiration is supplied.
 
-If the page was refreshed or closed, use the results CSV to remove rows with `CREATED` before retrying. The app cannot know what was created in a previous browser session unless ShipHero rejects duplicates.
+If a live upload partially succeeds and then errors, keep the page open. The app also remembers rows that returned `CREATED` in that browser session and skips them on the next live run, so rerunning the same CSV retries the remaining rows only.
+
+If the page was refreshed or closed, keep `Skip existing in ShipHero` on before retrying. If ShipHero cannot look up existing lots for a row, use the results CSV to remove rows with `CREATED` before retrying.
 
 ## Deploy to Vercel
 

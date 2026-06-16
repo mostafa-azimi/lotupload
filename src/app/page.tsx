@@ -49,6 +49,7 @@ export default function Home() {
   const [fileName, setFileName] = useState("");
   const [dryRun, setDryRun] = useState(true);
   const [stopOnError, setStopOnError] = useState(true);
+  const [skipExisting, setSkipExisting] = useState(true);
   const [throttleMs, setThrottleMs] = useState(150);
   const [state, setState] = useState<RunState>("idle");
   const [statusText, setStatusText] = useState("Waiting for a CSV.");
@@ -249,6 +250,7 @@ export default function Home() {
             options: {
               dryRun,
               stopOnError,
+              skipExisting,
               throttleMs,
             },
           }),
@@ -475,6 +477,11 @@ export default function Home() {
                 checked={stopOnError}
                 label="Stop on first error"
                 onChange={setStopOnError}
+              />
+              <Toggle
+                checked={skipExisting}
+                label="Skip existing in ShipHero"
+                onChange={setSkipExisting}
               />
               <label className="field-label" htmlFor="throttle">
                 Delay between live requests

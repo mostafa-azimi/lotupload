@@ -8,7 +8,7 @@ import {
   type RunOptions,
 } from "@/lib/lots";
 import { createTraceId, fingerprintSecret, logEvent, readTraceId } from "@/lib/logging";
-import { createLot, readProvidedAccessToken, refreshAccessToken } from "@/lib/shiphero";
+import { createLot, findExistingLot, readProvidedAccessToken, refreshAccessToken } from "@/lib/shiphero";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -35,6 +35,7 @@ export async function POST(request: Request) {
       rowCount: rows.length,
       dryRun: options.dryRun,
       stopOnError: options.stopOnError,
+      skipExisting: options.skipExisting,
       throttleMs: options.throttleMs,
       hasClientId: Boolean(body.clientId?.trim()),
       hasRefreshToken: Boolean(body.refreshToken?.trim()),
@@ -81,6 +82,27 @@ export async function POST(request: Request) {
             message: "Validated only.",
           });
         } else {
+          if (options.skipExisting) {
+            const existingLot = await findExistingLot(accessToken, payload, {
+              traceId,
+              operation: "find-existing-lot",
+              rowNumber: row.rowNumber,
+            });
+
+            if (existingLot) {
+              results.push({
+                rowNumber: row.rowNumber,
+                status: "SKIPPED",
+                lotName: payload.name,
+                sku: payload.sku,
+                expiresAt: payload.expires_at ?? "",
+                lotId: existingLot.id ?? "",
+                message: "Already exists in ShipHero.",
+              });
+              continue;
+            }
+          }
+
           const response = await createLot(accessToken, payload, {
             traceId,
             operation: "create-lots",
@@ -137,6 +159,7 @@ export async function POST(request: Request) {
       halted,
       createdCount: results.filter((result) => result.status === "CREATED").length,
       dryRunCount: results.filter((result) => result.status === "DRY_RUN").length,
+      skippedCount: results.filter((result) => result.status === "SKIPPED").length,
       errorCount: results.filter((result) => result.status === "ERROR").length,
       throttledCount: results.filter((result) => result.status === "THROTTLED").length,
       refreshTokenRotated: Boolean(refreshed?.rotatedRefreshToken),

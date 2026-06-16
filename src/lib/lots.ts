@@ -49,6 +49,7 @@ export type LotResult = {
 export type RunOptions = {
   dryRun: boolean;
   stopOnError: boolean;
+  skipExisting: boolean;
   throttleMs: number;
 };
 
@@ -131,6 +132,7 @@ export function normalizeRunOptions(options: Partial<RunOptions> = {}): RunOptio
   return {
     dryRun: Boolean(options.dryRun),
     stopOnError: Boolean(options.stopOnError),
+    skipExisting: options.skipExisting !== false,
     throttleMs,
   };
 }

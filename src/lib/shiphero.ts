@@ -68,6 +68,26 @@ export type CreatedLot = {
   is_active?: boolean;
 };
 
+export type ExistingLot = CreatedLot & {
+  account_id?: string;
+};
+
+type ExistingLotsResponse = {
+  expiration_lots?: {
+    request_id?: string;
+    complexity?: string | number;
+    data?: {
+      pageInfo?: {
+        hasNextPage?: boolean;
+        endCursor?: string;
+      };
+      edges?: Array<{
+        node?: ExistingLot;
+      }>;
+    };
+  };
+};
+
 export type CreateLotResponse = {
   request_id?: string;
   complexity?: string | number;
@@ -201,6 +221,103 @@ export async function createLot(
   return mutation;
 }
 
+export async function findExistingLot(
+  accessToken: string,
+  payload: LotPayload,
+  context: ShipHeroRequestContext = {},
+): Promise<ExistingLot | null> {
+  let after: string | null = null;
+  const maxPages = 5;
+
+  for (let page = 0; page < maxPages; page += 1) {
+    const response: GraphQLResponse<ExistingLotsResponse> = await callShipHero<ExistingLotsResponse>({
+      accessToken,
+      query: [
+        "query ExistingLots($sku: String, $after: String) {",
+        "  expiration_lots(sku: $sku) {",
+        "    request_id",
+        "    complexity",
+        "    data(first: 100, after: $after) {",
+        "      pageInfo { hasNextPage endCursor }",
+        "      edges {",
+        "        node {",
+        "          id",
+        "          legacy_id",
+        "          account_id",
+        "          name",
+        "          sku",
+        "          expires_at",
+        "          is_active",
+        "        }",
+        "      }",
+        "    }",
+        "  }",
+        "}",
+      ].join("\n"),
+      variables: {
+        sku: payload.sku,
+        after,
+      },
+      operationName: "ExistingLots",
+      context,
+    });
+
+    const queryResult = response.data?.expiration_lots;
+    const edges = queryResult?.data?.edges ?? [];
+    const match = edges
+      .map((edge) => edge.node)
+      .find((lot): lot is ExistingLot => Boolean(lot && isSameLot(payload, lot)));
+
+    if (match) {
+      logEvent("info", "shiphero.lots.existing_found", {
+        traceId: context.traceId,
+        operation: context.operation,
+        rowNumber: context.rowNumber ?? "",
+        lotId: match.id ?? "",
+        lotName: match.name ?? "",
+        sku: match.sku ?? "",
+        expiresAt: match.expires_at ?? "",
+        shipheroRequestId: queryResult?.request_id ?? "",
+      });
+      return match;
+    }
+
+    if (!queryResult?.data?.pageInfo?.hasNextPage) {
+      return null;
+    }
+
+    after = queryResult.data.pageInfo.endCursor ?? null;
+    if (!after) {
+      return null;
+    }
+  }
+
+  logEvent("warn", "shiphero.lots.existing_lookup_cap_reached", {
+    traceId: context.traceId,
+    operation: context.operation,
+    rowNumber: context.rowNumber ?? "",
+    sku: payload.sku,
+    maxPages,
+  });
+
+  return null;
+}
+
+function isSameLot(payload: LotPayload, lot: ExistingLot): boolean {
+  const sameName = normalizeComparable(payload.name) === normalizeComparable(lot.name);
+  const sameSku = normalizeComparable(payload.sku) === normalizeComparable(lot.sku);
+
+  if (!sameName || !sameSku) {
+    return false;
+  }
+
+  if (!payload.expires_at) {
+    return true;
+  }
+
+  return normalizeDateForCompare(payload.expires_at) === normalizeDateForCompare(lot.expires_at);
+}
+
 export async function refreshAccessToken(
   refreshToken: string,
   clientId?: string,
@@ -301,6 +418,15 @@ function normalizeAccessToken(accessToken?: string): string {
     throw new Error("Enter a ShipHero access token.");
   }
   return cleaned;
+}
+
+function normalizeComparable(value?: string): string {
+  return String(value ?? "").trim().toLowerCase();
+}
+
+function normalizeDateForCompare(value?: string): string {
+  const timestamp = Date.parse(String(value ?? ""));
+  return Number.isNaN(timestamp) ? normalizeComparable(value) : String(timestamp);
 }
 
 async function callShipHero<T>({
