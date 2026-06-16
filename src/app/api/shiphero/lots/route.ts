@@ -16,6 +16,7 @@ export async function POST(request: Request) {
   try {
     const body = (await request.json()) as {
       refreshToken?: string;
+      clientId?: string;
       rows?: LotInputRow[];
       options?: Partial<RunOptions>;
     };
@@ -28,7 +29,7 @@ export async function POST(request: Request) {
 
     const accessToken = options.dryRun
       ? ""
-      : await refreshAccessToken(body.refreshToken ?? "");
+      : await refreshAccessToken(body.refreshToken ?? "", body.clientId);
     const results: LotResult[] = [];
     let halted = false;
 

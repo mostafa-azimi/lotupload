@@ -2,7 +2,6 @@ import { cleanMessage, type LotPayload } from "@/lib/lots";
 
 const SHIPHERO_API_ENDPOINT = "https://public-api.shiphero.com/graphql";
 const SHIPHERO_TOKEN_ENDPOINT = "https://login.shiphero.com/oauth/token";
-const SHIPHERO_CLIENT_ID = "7A64u5rLqB6lgadxI9Izs8IQ0ayqZQx4";
 
 type ShipHeroTokenResponse = {
   access_token?: string;
@@ -52,8 +51,11 @@ export type CreateLotResponse = {
   lot?: CreatedLot;
 };
 
-export async function verifyRefreshToken(refreshToken: string): Promise<VerifiedAccount> {
-  const accessToken = await refreshAccessToken(refreshToken);
+export async function verifyRefreshToken(
+  refreshToken: string,
+  clientId?: string,
+): Promise<VerifiedAccount> {
+  const accessToken = await refreshAccessToken(refreshToken, clientId);
   const response = await callShipHero<{
     me?: {
       request_id?: string;
@@ -134,11 +136,15 @@ export async function createLot(
   return mutation;
 }
 
-export async function refreshAccessToken(refreshToken: string): Promise<string> {
+export async function refreshAccessToken(
+  refreshToken: string,
+  clientId?: string,
+): Promise<string> {
   const cleaned = refreshToken.trim();
   if (!cleaned) {
     throw new Error("Enter a ShipHero refresh token.");
   }
+  const cleanedClientId = normalizeClientId(clientId);
 
   const response = await fetchWithTimeout(SHIPHERO_TOKEN_ENDPOINT, {
     method: "POST",
@@ -147,7 +153,7 @@ export async function refreshAccessToken(refreshToken: string): Promise<string> 
     },
     body: new URLSearchParams({
       grant_type: "refresh_token",
-      client_id: SHIPHERO_CLIENT_ID,
+      client_id: cleanedClientId,
       refresh_token: cleaned,
     }),
   });
@@ -164,6 +170,14 @@ export async function refreshAccessToken(refreshToken: string): Promise<string> 
   }
 
   return body.access_token;
+}
+
+function normalizeClientId(clientId?: string): string {
+  const cleaned = (clientId ?? "").trim() || process.env.SHIPHERO_CLIENT_ID?.trim() || "";
+  if (!cleaned) {
+    throw new Error("Enter the ShipHero OAuth client ID that created this refresh token.");
+  }
+  return cleaned;
 }
 
 async function callShipHero<T>({

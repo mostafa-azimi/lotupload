@@ -37,6 +37,7 @@ const BATCH_SIZE = 20;
 
 export default function Home() {
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [clientId, setClientId] = useState("");
   const [refreshToken, setRefreshToken] = useState("");
   const [account, setAccount] = useState<VerifiedAccount | null>(null);
   const [rows, setRows] = useState<LotInputRow[]>([]);
@@ -72,10 +73,26 @@ export default function Home() {
     setRefreshToken(value);
     setAccount(null);
     setState("idle");
-    setStatusText(value.trim() ? "Token entered. Verify account before live upload." : "Waiting for a CSV.");
+    setStatusText(
+      value.trim()
+        ? "Token entered. Enter the matching OAuth client ID, then verify account."
+        : "Waiting for a CSV.",
+    );
+  }
+
+  function updateClientId(value: string) {
+    setClientId(value);
+    setAccount(null);
+    setState("idle");
+    setStatusText("Client ID changed. Verify account before live upload.");
   }
 
   async function verifyToken() {
+    if (!clientId.trim()) {
+      setState("error");
+      setStatusText("Enter the ShipHero OAuth client ID for this refresh token.");
+      return;
+    }
     if (!refreshToken.trim()) {
       setState("error");
       setStatusText("Paste a ShipHero refresh token first.");
@@ -90,7 +107,7 @@ export default function Home() {
       const response = await fetchWithTimeout("/api/shiphero/verify", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ refreshToken }),
+        body: JSON.stringify({ refreshToken, clientId }),
       });
       const body = await response.json();
 
@@ -168,6 +185,7 @@ export default function Home() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             refreshToken,
+            clientId,
             rows: batch,
             options: {
               dryRun,
@@ -265,6 +283,18 @@ export default function Home() {
       <section className="mx-auto grid w-full max-w-7xl gap-4 px-4 py-5 sm:px-6 lg:grid-cols-[380px_1fr] lg:px-8">
         <div className="flex min-w-0 flex-col gap-4">
           <Panel title="Refresh Token" icon={<KeyRound className="size-4" aria-hidden />}>
+            <label className="field-label" htmlFor="client-id">
+              ShipHero OAuth client ID
+            </label>
+            <input
+              id="client-id"
+              className="mb-3 h-10 w-full rounded-md border border-zinc-300 bg-white px-3 font-mono text-sm outline-none ring-teal-600 transition focus:ring-2"
+              placeholder="Paste OAuth client ID for this refresh token"
+              value={clientId}
+              onChange={(event) => updateClientId(event.target.value)}
+              autoComplete="off"
+              spellCheck={false}
+            />
             <label className="field-label" htmlFor="refresh-token">
               ShipHero refresh token
             </label>
@@ -281,7 +311,7 @@ export default function Home() {
                 className="btn-secondary"
                 type="button"
                 onClick={verifyToken}
-                disabled={state === "checking" || !refreshToken.trim()}
+                disabled={state === "checking" || !refreshToken.trim() || !clientId.trim()}
               >
                 {state === "checking" ? (
                   <Loader2 className="size-4 animate-spin" aria-hidden />
