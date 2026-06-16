@@ -17,6 +17,7 @@ import {
 import { useMemo, useRef, useState } from "react";
 import type { ChangeEvent, ReactNode } from "react";
 import {
+  normalizeLotRow,
   parseCsv,
   SAMPLE_CSV,
   toResultsCsv,
@@ -53,6 +54,7 @@ export default function Home() {
   const [statusText, setStatusText] = useState("Waiting for a CSV.");
   const [lastTraceId, setLastTraceId] = useState("");
   const [results, setResults] = useState<LotResult[]>([]);
+  const [createdLotKeys, setCreatedLotKeys] = useState<Set<string>>(new Set());
   const [processed, setProcessed] = useState(0);
 
   const counts = useMemo(() => {
@@ -61,11 +63,12 @@ export default function Home() {
         acc.total += 1;
         if (result.status === "CREATED") acc.created += 1;
         if (result.status === "DRY_RUN") acc.validated += 1;
+        if (result.status === "SKIPPED") acc.skipped += 1;
         if (result.status === "ERROR") acc.errors += 1;
         if (result.status === "THROTTLED") acc.throttled += 1;
         return acc;
       },
-      { total: 0, created: 0, validated: 0, errors: 0, throttled: 0 },
+      { total: 0, created: 0, validated: 0, skipped: 0, errors: 0, throttled: 0 },
     );
   }, [results]);
 
@@ -214,16 +217,26 @@ export default function Home() {
     }
 
     setState("running");
-    setResults([]);
-    setProcessed(0);
+    const skippedResults = dryRun ? [] : buildSkippedResults(rows, createdLotKeys, account?.accountId);
+    const rowsToRun = dryRun
+      ? rows
+      : rows.filter((row) => !createdLotKeys.has(lotRowKey(row, account?.accountId)));
+    setResults(skippedResults);
+    setProcessed(skippedResults.length);
     setStatusText(dryRun ? "Validating CSV rows..." : "Creating ShipHero lots...");
 
-    const nextResults: LotResult[] = [];
+    if (!dryRun && skippedResults.length && !rowsToRun.length) {
+      setState("done");
+      setStatusText("All rows were skipped because they were already created in this browser session.");
+      return;
+    }
+
+    const nextResults: LotResult[] = [...skippedResults];
     let activeRefreshToken = refreshToken;
 
     try {
-      for (let start = 0; start < rows.length; start += BATCH_SIZE) {
-        const batch = rows.slice(start, start + BATCH_SIZE);
+      for (let start = 0; start < rowsToRun.length; start += BATCH_SIZE) {
+        const batch = rowsToRun.slice(start, start + BATCH_SIZE);
         const response = await fetchWithTimeout("/api/shiphero/lots", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -253,8 +266,9 @@ export default function Home() {
         }
 
         nextResults.push(...body.results);
+        rememberCreatedLots(body.results, rowsToRun, account?.accountId, setCreatedLotKeys);
         setResults([...nextResults]);
-        setProcessed(Math.min(start + batch.length, rows.length));
+        setProcessed(Math.min(skippedResults.length + start + batch.length, rows.length));
 
         if (body.halted) {
           setState("error");
@@ -264,7 +278,13 @@ export default function Home() {
       }
 
       setState("done");
-      setStatusText(dryRun ? "Dry run finished. No lots were created." : "Live run finished.");
+      setStatusText(
+        dryRun
+          ? "Dry run finished. No lots were created."
+          : skippedResults.length
+            ? `Live run finished. Skipped ${skippedResults.length} row${skippedResults.length === 1 ? "" : "s"} already created in this browser session.`
+            : "Live run finished.",
+      );
     } catch (error) {
       setState("error");
       setStatusText(readError(error));
@@ -327,7 +347,7 @@ export default function Home() {
             <Metric label="CSV rows" value={rows.length} tone="neutral" />
             <Metric label={dryRun ? "Validated" : "Created"} value={dryRun ? counts.validated : counts.created} tone="good" />
             <Metric label="Errors" value={counts.errors} tone="bad" />
-            <Metric label="Throttled" value={counts.throttled} tone="warn" />
+            <Metric label={counts.skipped ? "Skipped" : "Throttled"} value={counts.skipped || counts.throttled} tone="warn" />
           </div>
         </div>
       </section>
@@ -719,15 +739,87 @@ function ResultBadge({ status }: { status: LotResult["status"] }) {
   const settings = {
     DRY_RUN: "bg-zinc-100 text-zinc-700",
     CREATED: "bg-teal-100 text-teal-800",
+    SKIPPED: "bg-amber-100 text-amber-800",
     ERROR: "bg-rose-100 text-rose-800",
     THROTTLED: "bg-amber-100 text-amber-800",
   }[status];
 
   return (
     <span className={`inline-flex h-7 items-center rounded-md px-2 text-xs font-semibold ${settings}`}>
-      {status}
+                  {status}
     </span>
   );
+}
+
+function buildSkippedResults(
+  rows: LotInputRow[],
+  createdLotKeys: Set<string>,
+  accountId?: string,
+): LotResult[] {
+  return rows
+    .filter((row) => createdLotKeys.has(lotRowKey(row, accountId)))
+    .map((row) => {
+      try {
+        const payload = normalizeLotRow(row);
+        return {
+          rowNumber: row.rowNumber,
+          status: "SKIPPED",
+          lotName: payload.name,
+          sku: payload.sku,
+          expiresAt: payload.expires_at ?? "",
+          message: "Already created in this browser session.",
+        };
+      } catch {
+        return {
+          rowNumber: row.rowNumber,
+          status: "SKIPPED",
+          message: "Already created in this browser session.",
+        };
+      }
+    });
+}
+
+function rememberCreatedLots(
+  results: LotResult[],
+  rows: LotInputRow[],
+  accountId: string | undefined,
+  setCreatedLotKeys: (updater: (previous: Set<string>) => Set<string>) => void,
+) {
+  const createdRows = new Set(
+    results
+      .filter((result) => result.status === "CREATED")
+      .map((result) => result.rowNumber)
+      .filter((rowNumber): rowNumber is number => typeof rowNumber === "number"),
+  );
+
+  if (!createdRows.size) {
+    return;
+  }
+
+  setCreatedLotKeys((previous) => {
+    const next = new Set(previous);
+    rows
+      .filter((row) => createdRows.has(row.rowNumber))
+      .forEach((row) => next.add(lotRowKey(row, accountId)));
+    return next;
+  });
+}
+
+function lotRowKey(row: LotInputRow, accountId?: string): string {
+  try {
+    const payload = normalizeLotRow(row);
+    return [
+      accountId || "unverified",
+      payload.name,
+      payload.sku,
+      payload.expires_at ?? "",
+      payload.customer_account_id ?? "",
+    ]
+      .map((value) => value.trim().toLowerCase())
+      .join("|");
+  } catch {
+    return `${accountId || "unverified"}|row:${row.rowNumber}`;
+  }
 }
 
 async function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit): Promise<Response> {

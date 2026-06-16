@@ -8,6 +8,7 @@ This is a Vercel-ready Next.js app for creating ShipHero lots from a CSV.
 - Sends the matching ShipHero OAuth client ID during token refresh.
 - Keeps the browser session updated when ShipHero rotates the refresh token.
 - Can use a direct ShipHero access token for short emergency runs.
+- Skips rows already marked as created in the current browser session when rerunning the same CSV.
 - Verifies the token with ShipHero and shows the connected email, user ID, account ID, and request ID.
 - Downloads a CSV template with the accepted columns.
 - Uploads a CSV, validates rows in dry-run mode, then creates lots in live mode.
@@ -63,6 +64,12 @@ ShipHero can return a new refresh token during refresh. When that happens, the a
 ## Access token mode
 
 Access token mode skips the refresh-token exchange and sends the pasted access token directly to ShipHero GraphQL. It is useful when a customer needs an immediate one-time run and the refresh token is blocked. Access tokens expire, so refresh token mode is better for repeat use.
+
+## Retrying after a partial upload
+
+If a live upload partially succeeds and then errors, keep the page open. The app remembers rows that returned `CREATED` in that browser session and skips them on the next live run, so rerunning the same CSV retries the remaining rows only.
+
+If the page was refreshed or closed, use the results CSV to remove rows with `CREATED` before retrying. The app cannot know what was created in a previous browser session unless ShipHero rejects duplicates.
 
 ## Deploy to Vercel
 

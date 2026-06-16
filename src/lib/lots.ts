@@ -36,7 +36,7 @@ export type LotInputRow = {
 
 export type LotResult = {
   rowNumber: number | "";
-  status: "DRY_RUN" | "CREATED" | "ERROR" | "THROTTLED";
+  status: "DRY_RUN" | "CREATED" | "SKIPPED" | "ERROR" | "THROTTLED";
   lotName?: string;
   sku?: string;
   expiresAt?: string;
