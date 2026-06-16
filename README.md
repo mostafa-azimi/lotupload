@@ -11,6 +11,7 @@ This is a Vercel-ready Next.js app for creating ShipHero lots from a CSV.
 - Uploads a CSV, validates rows in dry-run mode, then creates lots in live mode.
 - Processes rows in small batches so the browser stays responsive.
 - Exports a result CSV with created lot IDs, request IDs, and row-level errors.
+- Writes safe server logs with trace IDs for OAuth refresh, account verification, and lot creation.
 
 ## CSV columns
 
@@ -64,3 +65,13 @@ Recommended before customer use:
 - Deploy the app behind Vercel authentication, password protection, or another access control layer.
 - Run a dry check before switching off dry run.
 - Confirm the verified account is the intended child account before live creation.
+
+## Debug logs
+
+Every verify/upload request gets a trace ID. The UI shows the latest trace ID, and Vercel logs include entries prefixed with:
+
+```text
+[shiphero-lot-upload]
+```
+
+The logs include HTTP status, OAuth error text, row counts, ShipHero request IDs when available, and safe fingerprints for the refresh token/client ID. They do not log refresh tokens or access tokens.

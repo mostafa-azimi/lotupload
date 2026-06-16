@@ -1,4 +1,10 @@
 import { cleanMessage, type LotPayload } from "@/lib/lots";
+import {
+  attachTraceId,
+  fingerprintSecret,
+  logEvent,
+  traceError,
+} from "@/lib/logging";
 
 const SHIPHERO_API_ENDPOINT = "https://public-api.shiphero.com/graphql";
 const SHIPHERO_TOKEN_ENDPOINT = "https://login.shiphero.com/oauth/token";
@@ -29,6 +35,12 @@ type GraphQLResponse<T> = {
   errors?: GraphQLErrorShape[];
 };
 
+export type ShipHeroRequestContext = {
+  traceId?: string;
+  operation?: string;
+  rowNumber?: number | "";
+};
+
 export type VerifiedAccount = {
   email: string;
   userId: string;
@@ -54,8 +66,12 @@ export type CreateLotResponse = {
 export async function verifyRefreshToken(
   refreshToken: string,
   clientId?: string,
+  context: ShipHeroRequestContext = {},
 ): Promise<VerifiedAccount> {
-  const accessToken = await refreshAccessToken(refreshToken, clientId);
+  const accessToken = await refreshAccessToken(refreshToken, clientId, {
+    ...context,
+    operation: context.operation ?? "verify-refresh-token",
+  });
   const response = await callShipHero<{
     me?: {
       request_id?: string;
@@ -83,6 +99,8 @@ export async function verifyRefreshToken(
       "}",
     ].join("\n"),
     variables: {},
+    operationName: "TokenProbe",
+    context,
   });
 
   const me = response.data?.me;
@@ -102,6 +120,7 @@ export async function verifyRefreshToken(
 export async function createLot(
   accessToken: string,
   payload: LotPayload,
+  context: ShipHeroRequestContext = {},
 ): Promise<CreateLotResponse> {
   const response = await callShipHero<{
     lot_create?: CreateLotResponse;
@@ -126,6 +145,8 @@ export async function createLot(
     variables: {
       data: payload,
     },
+    operationName: "CreateLot",
+    context,
   });
 
   const mutation = response.data?.lot_create;
@@ -139,6 +160,7 @@ export async function createLot(
 export async function refreshAccessToken(
   refreshToken: string,
   clientId?: string,
+  context: ShipHeroRequestContext = {},
 ): Promise<string> {
   const cleaned = refreshToken.trim();
   if (!cleaned) {
@@ -146,26 +168,71 @@ export async function refreshAccessToken(
   }
   const cleanedClientId = normalizeClientId(clientId);
 
-  const response = await fetchWithTimeout(SHIPHERO_TOKEN_ENDPOINT, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded",
-    },
-    body: new URLSearchParams({
-      grant_type: "refresh_token",
-      client_id: cleanedClientId,
-      refresh_token: cleaned,
-    }),
+  logEvent("info", "shiphero.oauth.refresh.start", {
+    traceId: context.traceId,
+    operation: context.operation,
+    clientIdFingerprint: fingerprintSecret(cleanedClientId),
+    refreshTokenFingerprint: fingerprintSecret(cleaned),
+    hasEnvClientIdFallback: Boolean(process.env.SHIPHERO_CLIENT_ID?.trim()),
   });
 
+  let response: Response;
+  try {
+    response = await fetchWithTimeout(SHIPHERO_TOKEN_ENDPOINT, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: new URLSearchParams({
+        grant_type: "refresh_token",
+        client_id: cleanedClientId,
+        refresh_token: cleaned,
+      }),
+    });
+  } catch (error) {
+    logEvent("error", "shiphero.oauth.refresh.fetch_failed", {
+      traceId: context.traceId,
+      operation: context.operation,
+      error: cleanMessage(error),
+    });
+    throw attachTraceId(error, context.traceId);
+  }
+
   const text = await response.text();
-  const body = parseJson<ShipHeroTokenResponse>(text, "ShipHero token refresh");
+  let body: ShipHeroTokenResponse;
+  try {
+    body = parseJson<ShipHeroTokenResponse>(text, "ShipHero token refresh");
+  } catch (error) {
+    logEvent("warn", "shiphero.oauth.refresh.non_json_response", {
+      traceId: context.traceId,
+      operation: context.operation,
+      httpStatus: response.status,
+      responsePreview: text,
+    });
+    throw attachTraceId(error, context.traceId);
+  }
+
+  const oauthMessage = readOAuthMessage(body, text);
+  logEvent(response.ok && body.access_token ? "info" : "warn", "shiphero.oauth.refresh.response", {
+    traceId: context.traceId,
+    operation: context.operation,
+    httpStatus: response.status,
+    ok: response.ok,
+    hasAccessToken: Boolean(body.access_token),
+    hasNewRefreshToken: Boolean(body.refresh_token),
+    expiresIn: body.expires_in ?? null,
+    oauthError: body.error ?? "",
+    oauthMessage,
+    bodyKeys: Object.keys(body),
+  });
+
   if (!response.ok || !body.access_token) {
-    throw new Error(
+    throw traceError(
       `Could not refresh ShipHero access token: HTTP ${response.status} ${readOAuthMessage(
         body,
         text,
       )}`,
+      context.traceId,
     );
   }
 
@@ -184,11 +251,22 @@ async function callShipHero<T>({
   accessToken,
   query,
   variables,
+  operationName,
+  context,
 }: {
   accessToken: string;
   query: string;
   variables: Record<string, unknown>;
+  operationName: string;
+  context: ShipHeroRequestContext;
 }): Promise<GraphQLResponse<T>> {
+  logEvent("info", "shiphero.graphql.request.start", {
+    traceId: context.traceId,
+    operation: context.operation,
+    operationName,
+    rowNumber: context.rowNumber ?? "",
+  });
+
   const response = await fetchWithTimeout(SHIPHERO_API_ENDPOINT, {
     method: "POST",
     headers: {
@@ -199,25 +277,48 @@ async function callShipHero<T>({
   });
 
   const text = await response.text();
-  const body = parseJson<GraphQLResponse<T>>(text, "ShipHero GraphQL");
+  let body: GraphQLResponse<T>;
+  try {
+    body = parseJson<GraphQLResponse<T>>(text, "ShipHero GraphQL");
+  } catch (error) {
+    logEvent("warn", "shiphero.graphql.non_json_response", {
+      traceId: context.traceId,
+      operation: context.operation,
+      operationName,
+      httpStatus: response.status,
+      responsePreview: text,
+    });
+    throw attachTraceId(error, context.traceId);
+  }
+
+  logEvent(response.ok && !body.errors?.length ? "info" : "warn", "shiphero.graphql.response", {
+    traceId: context.traceId,
+    operation: context.operation,
+    operationName,
+    rowNumber: context.rowNumber ?? "",
+    httpStatus: response.status,
+    ok: response.ok,
+    hasGraphQLErrors: Boolean(body.errors?.length),
+    graphQLErrorCount: body.errors?.length ?? 0,
+  });
 
   if (response.status === 401) {
-    throw new Error("ShipHero rejected the access token with HTTP 401.");
+    throw traceError("ShipHero rejected the access token with HTTP 401.", context.traceId);
   }
   if (response.status === 429) {
     const error = new Error("ShipHero rate limit reached. Wait before retrying.");
-    Object.assign(error, { isThrottle: true });
+    Object.assign(error, { isThrottle: true, traceId: context.traceId });
     throw error;
   }
   if (!response.ok) {
-    throw new Error(`ShipHero HTTP ${response.status}: ${cleanMessage(text)}`);
+    throw traceError(`ShipHero HTTP ${response.status}: ${cleanMessage(text)}`, context.traceId);
   }
 
-  throwIfGraphQLErrors(body);
+  throwIfGraphQLErrors(body, context.traceId);
   return body;
 }
 
-function throwIfGraphQLErrors(response: GraphQLResponse<unknown>) {
+function throwIfGraphQLErrors(response: GraphQLResponse<unknown>, traceId?: string) {
   if (!response.errors?.length) {
     return;
   }
@@ -244,6 +345,7 @@ function throwIfGraphQLErrors(response: GraphQLResponse<unknown>) {
   Object.assign(error, {
     requestId,
     isThrottle: String(code) === "30",
+    traceId,
   });
   throw error;
 }

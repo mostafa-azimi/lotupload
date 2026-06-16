@@ -7,12 +7,15 @@ import {
   type LotResult,
   type RunOptions,
 } from "@/lib/lots";
+import { createTraceId, fingerprintSecret, logEvent, readTraceId } from "@/lib/logging";
 import { createLot, refreshAccessToken } from "@/lib/shiphero";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
 export async function POST(request: Request) {
+  const traceId = createTraceId("lots");
+
   try {
     const body = (await request.json()) as {
       refreshToken?: string;
@@ -23,13 +26,28 @@ export async function POST(request: Request) {
     const rows = Array.isArray(body.rows) ? body.rows : [];
     const options = normalizeRunOptions(body.options);
 
+    logEvent("info", "shiphero.lots.request.received", {
+      traceId,
+      rowCount: rows.length,
+      dryRun: options.dryRun,
+      stopOnError: options.stopOnError,
+      throttleMs: options.throttleMs,
+      hasClientId: Boolean(body.clientId?.trim()),
+      hasRefreshToken: Boolean(body.refreshToken?.trim()),
+      clientIdFingerprint: fingerprintSecret(body.clientId),
+      refreshTokenFingerprint: fingerprintSecret(body.refreshToken),
+    });
+
     if (!rows.length) {
       throw new Error("No CSV rows were provided.");
     }
 
     const accessToken = options.dryRun
       ? ""
-      : await refreshAccessToken(body.refreshToken ?? "", body.clientId);
+      : await refreshAccessToken(body.refreshToken ?? "", body.clientId, {
+          traceId,
+          operation: "create-lots",
+        });
     const results: LotResult[] = [];
     let halted = false;
 
@@ -48,7 +66,11 @@ export async function POST(request: Request) {
             message: "Validated only.",
           });
         } else {
-          const response = await createLot(accessToken, payload);
+          const response = await createLot(accessToken, payload, {
+            traceId,
+            operation: "create-lots",
+            rowNumber: row.rowNumber,
+          });
           results.push({
             rowNumber: row.rowNumber,
             status: "CREATED",
@@ -63,6 +85,14 @@ export async function POST(request: Request) {
         }
       } catch (error) {
         const status = isThrottleError(error) ? "THROTTLED" : "ERROR";
+        logEvent(status === "THROTTLED" ? "warn" : "error", "shiphero.lots.row.failed", {
+          traceId: readTraceId(error) || traceId,
+          rowNumber: row?.rowNumber ?? "",
+          status,
+          shipheroRequestId: readRequestId(error),
+          error: cleanMessage(error),
+        });
+
         results.push({
           rowNumber: row?.rowNumber ?? "",
           status,
@@ -84,16 +114,35 @@ export async function POST(request: Request) {
       }
     }
 
+    logEvent(halted ? "warn" : "info", "shiphero.lots.request.completed", {
+      traceId,
+      rowCount: rows.length,
+      resultCount: results.length,
+      halted,
+      createdCount: results.filter((result) => result.status === "CREATED").length,
+      dryRunCount: results.filter((result) => result.status === "DRY_RUN").length,
+      errorCount: results.filter((result) => result.status === "ERROR").length,
+      throttledCount: results.filter((result) => result.status === "THROTTLED").length,
+    });
+
     return NextResponse.json({
       ok: true,
       halted,
       results,
+      traceId,
     });
   } catch (error) {
+    const errorTraceId = readTraceId(error) || traceId;
+    logEvent("error", "shiphero.lots.request.failed", {
+      traceId: errorTraceId,
+      error: cleanMessage(error),
+    });
+
     return NextResponse.json(
       {
         ok: false,
         error: cleanMessage(error),
+        traceId: errorTraceId,
       },
       { status: 400 },
     );

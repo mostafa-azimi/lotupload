@@ -48,6 +48,7 @@ export default function Home() {
   const [throttleMs, setThrottleMs] = useState(150);
   const [state, setState] = useState<RunState>("idle");
   const [statusText, setStatusText] = useState("Waiting for a CSV.");
+  const [lastTraceId, setLastTraceId] = useState("");
   const [results, setResults] = useState<LotResult[]>([]);
   const [processed, setProcessed] = useState(0);
 
@@ -110,9 +111,10 @@ export default function Home() {
         body: JSON.stringify({ refreshToken, clientId }),
       });
       const body = await response.json();
+      setLastTraceId(body.traceId ?? "");
 
       if (!response.ok || !body.ok) {
-        throw new Error(body.error || "Token check failed.");
+        throw new Error(formatApiError(body.error || "Token check failed.", body.traceId));
       }
 
       setAccount(body.account);
@@ -195,9 +197,10 @@ export default function Home() {
           }),
         });
         const body = await response.json();
+        setLastTraceId(body.traceId ?? "");
 
         if (!response.ok || !body.ok) {
-          throw new Error(body.error || "Upload failed.");
+          throw new Error(formatApiError(body.error || "Upload failed.", body.traceId));
         }
 
         nextResults.push(...body.results);
@@ -462,6 +465,11 @@ export default function Home() {
               <div className="mt-2 text-xs text-zinc-600">
                 {processed} of {rows.length} rows processed
               </div>
+              {lastTraceId ? (
+                <div className="mt-2 break-all font-mono text-xs text-zinc-500">
+                  Trace ID: {lastTraceId}
+                </div>
+              ) : null}
             </div>
           </Panel>
 
@@ -666,4 +674,8 @@ function downloadText(fileName: string, contents: string) {
 
 function readError(error: unknown): string {
   return error instanceof Error ? error.message : "Request failed.";
+}
+
+function formatApiError(message: string, traceId?: string): string {
+  return traceId ? `${message} | Trace ID: ${traceId}` : message;
 }
