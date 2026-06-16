@@ -32,13 +32,16 @@ type VerifiedAccount = {
 };
 
 type RunState = "idle" | "checking" | "running" | "done" | "error";
+type AuthMode = "refresh" | "access";
 
 const BATCH_SIZE = 20;
 
 export default function Home() {
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [authMode, setAuthMode] = useState<AuthMode>("refresh");
   const [clientId, setClientId] = useState("");
   const [refreshToken, setRefreshToken] = useState("");
+  const [accessToken, setAccessToken] = useState("");
   const [account, setAccount] = useState<VerifiedAccount | null>(null);
   const [rows, setRows] = useState<LotInputRow[]>([]);
   const [csvText, setCsvText] = useState("");
@@ -68,7 +71,23 @@ export default function Home() {
 
   const canRun = rows.length > 0 && state !== "checking" && state !== "running";
   const liveRunBlocked = !dryRun && !account;
+  const authReady =
+    authMode === "access"
+      ? Boolean(accessToken.trim())
+      : Boolean(clientId.trim() && refreshToken.trim());
   const progressPercent = rows.length ? Math.round((processed / rows.length) * 100) : 0;
+
+  function updateAuthMode(value: AuthMode) {
+    setAuthMode(value);
+    setAccount(null);
+    setState("idle");
+    setLastTraceId("");
+    setStatusText(
+      value === "access"
+        ? "Access token mode selected. Verify account before live upload."
+        : "Refresh token mode selected. Enter client ID and refresh token.",
+    );
+  }
 
   function resetToken(value: string) {
     setRefreshToken(value);
@@ -81,6 +100,13 @@ export default function Home() {
     );
   }
 
+  function updateAccessToken(value: string) {
+    setAccessToken(value);
+    setAccount(null);
+    setState("idle");
+    setStatusText(value.trim() ? "Access token entered. Verify account before live upload." : "Waiting for a CSV.");
+  }
+
   function updateClientId(value: string) {
     setClientId(value);
     setAccount(null);
@@ -89,14 +115,19 @@ export default function Home() {
   }
 
   async function verifyToken() {
-    if (!clientId.trim()) {
+    if (authMode === "refresh" && !clientId.trim()) {
       setState("error");
       setStatusText("Enter the ShipHero OAuth client ID for this refresh token.");
       return;
     }
-    if (!refreshToken.trim()) {
+    if (authMode === "refresh" && !refreshToken.trim()) {
       setState("error");
       setStatusText("Paste a ShipHero refresh token first.");
+      return;
+    }
+    if (authMode === "access" && !accessToken.trim()) {
+      setState("error");
+      setStatusText("Paste a ShipHero access token first.");
       return;
     }
 
@@ -108,7 +139,7 @@ export default function Home() {
       const response = await fetchWithTimeout("/api/shiphero/verify", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ refreshToken, clientId }),
+        body: JSON.stringify({ authMode, refreshToken, accessToken, clientId }),
       });
       const body = await response.json();
       setLastTraceId(body.traceId ?? "");
@@ -117,9 +148,19 @@ export default function Home() {
         throw new Error(formatApiError(body.error || "Token check failed.", body.traceId));
       }
 
+      if (authMode === "refresh" && body.rotatedRefreshToken) {
+        setRefreshToken(body.rotatedRefreshToken);
+      }
+
       setAccount(body.account);
       setState("idle");
-      setStatusText("Connected. Confirm the account before running live mode.");
+      setStatusText(
+        body.rotatedRefreshToken
+          ? "Connected. Refresh token updated for this session."
+          : authMode === "access"
+            ? "Connected with access token. Confirm the account before running live mode."
+            : "Connected. Confirm the account before running live mode.",
+      );
     } catch (error) {
       setState("error");
       setStatusText(readError(error));
@@ -178,6 +219,7 @@ export default function Home() {
     setStatusText(dryRun ? "Validating CSV rows..." : "Creating ShipHero lots...");
 
     const nextResults: LotResult[] = [];
+    let activeRefreshToken = refreshToken;
 
     try {
       for (let start = 0; start < rows.length; start += BATCH_SIZE) {
@@ -186,7 +228,9 @@ export default function Home() {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            refreshToken,
+            authMode,
+            refreshToken: activeRefreshToken,
+            accessToken,
             clientId,
             rows: batch,
             options: {
@@ -201,6 +245,11 @@ export default function Home() {
 
         if (!response.ok || !body.ok) {
           throw new Error(formatApiError(body.error || "Upload failed.", body.traceId));
+        }
+
+        if (authMode === "refresh" && body.rotatedRefreshToken) {
+          activeRefreshToken = body.rotatedRefreshToken;
+          setRefreshToken(body.rotatedRefreshToken);
         }
 
         nextResults.push(...body.results);
@@ -286,35 +335,73 @@ export default function Home() {
       <section className="mx-auto grid w-full max-w-7xl gap-4 px-4 py-5 sm:px-6 lg:grid-cols-[380px_1fr] lg:px-8">
         <div className="flex min-w-0 flex-col gap-4">
           <Panel title="Refresh Token" icon={<KeyRound className="size-4" aria-hidden />}>
-            <label className="field-label" htmlFor="client-id">
-              ShipHero OAuth client ID
-            </label>
-            <input
-              id="client-id"
-              className="mb-3 h-10 w-full rounded-md border border-zinc-300 bg-white px-3 font-mono text-sm outline-none ring-teal-600 transition focus:ring-2"
-              placeholder="Paste OAuth client ID for this refresh token"
-              value={clientId}
-              onChange={(event) => updateClientId(event.target.value)}
-              autoComplete="off"
-              spellCheck={false}
-            />
-            <label className="field-label" htmlFor="refresh-token">
-              ShipHero refresh token
-            </label>
-            <textarea
-              id="refresh-token"
-              className="min-h-28 w-full resize-y rounded-md border border-zinc-300 bg-white p-3 font-mono text-sm outline-none ring-teal-600 transition focus:ring-2"
-              placeholder="Paste refresh token"
-              value={refreshToken}
-              onChange={(event) => resetToken(event.target.value)}
-              spellCheck={false}
-            />
+            <div className="mb-3 grid grid-cols-2 gap-2 rounded-md border border-zinc-200 bg-zinc-50 p-1">
+              <button
+                className={authMode === "refresh" ? "btn-primary" : "btn-ghost"}
+                type="button"
+                onClick={() => updateAuthMode("refresh")}
+              >
+                Refresh token
+              </button>
+              <button
+                className={authMode === "access" ? "btn-primary" : "btn-ghost"}
+                type="button"
+                onClick={() => updateAuthMode("access")}
+              >
+                Access token
+              </button>
+            </div>
+
+            {authMode === "refresh" ? (
+              <>
+                <label className="field-label" htmlFor="client-id">
+                  ShipHero OAuth client ID
+                </label>
+                <input
+                  id="client-id"
+                  className="mb-3 h-10 w-full rounded-md border border-zinc-300 bg-white px-3 font-mono text-sm outline-none ring-teal-600 transition focus:ring-2"
+                  placeholder="Paste OAuth client ID for this refresh token"
+                  value={clientId}
+                  onChange={(event) => updateClientId(event.target.value)}
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+                <label className="field-label" htmlFor="refresh-token">
+                  ShipHero refresh token
+                </label>
+                <textarea
+                  id="refresh-token"
+                  className="min-h-28 w-full resize-y rounded-md border border-zinc-300 bg-white p-3 font-mono text-sm outline-none ring-teal-600 transition focus:ring-2"
+                  placeholder="Paste refresh token"
+                  value={refreshToken}
+                  onChange={(event) => resetToken(event.target.value)}
+                  spellCheck={false}
+                />
+              </>
+            ) : (
+              <>
+                <label className="field-label" htmlFor="access-token">
+                  ShipHero access token
+                </label>
+                <textarea
+                  id="access-token"
+                  className="min-h-28 w-full resize-y rounded-md border border-zinc-300 bg-white p-3 font-mono text-sm outline-none ring-teal-600 transition focus:ring-2"
+                  placeholder="Paste access token"
+                  value={accessToken}
+                  onChange={(event) => updateAccessToken(event.target.value)}
+                  spellCheck={false}
+                />
+                <div className="mt-2 text-xs text-zinc-600">
+                  Access tokens expire. Use this for quick runs, then switch back to refresh token mode for repeat use.
+                </div>
+              </>
+            )}
             <div className="mt-3 flex flex-wrap gap-2">
               <button
                 className="btn-secondary"
                 type="button"
                 onClick={verifyToken}
-                disabled={state === "checking" || !refreshToken.trim() || !clientId.trim()}
+                disabled={state === "checking" || !authReady}
               >
                 {state === "checking" ? (
                   <Loader2 className="size-4 animate-spin" aria-hidden />
@@ -326,8 +413,8 @@ export default function Home() {
               <button
                 className="btn-ghost"
                 type="button"
-                onClick={() => resetToken("")}
-                disabled={!refreshToken}
+                onClick={() => (authMode === "access" ? updateAccessToken("") : resetToken(""))}
+                disabled={authMode === "access" ? !accessToken : !refreshToken}
               >
                 <Trash2 className="size-4" aria-hidden />
                 Clear

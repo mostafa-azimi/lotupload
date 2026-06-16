@@ -35,6 +35,12 @@ type GraphQLResponse<T> = {
   errors?: GraphQLErrorShape[];
 };
 
+export type RefreshedAccessToken = {
+  accessToken: string;
+  rotatedRefreshToken: string;
+  expiresIn?: number;
+};
+
 export type ShipHeroRequestContext = {
   traceId?: string;
   operation?: string;
@@ -46,6 +52,11 @@ export type VerifiedAccount = {
   userId: string;
   accountId: string;
   requestId: string;
+};
+
+export type VerifyRefreshTokenResult = {
+  account: VerifiedAccount;
+  rotatedRefreshToken: string;
 };
 
 export type CreatedLot = {
@@ -67,11 +78,44 @@ export async function verifyRefreshToken(
   refreshToken: string,
   clientId?: string,
   context: ShipHeroRequestContext = {},
-): Promise<VerifiedAccount> {
-  const accessToken = await refreshAccessToken(refreshToken, clientId, {
+): Promise<VerifyRefreshTokenResult> {
+  const refreshed = await refreshAccessToken(refreshToken, clientId, {
     ...context,
     operation: context.operation ?? "verify-refresh-token",
   });
+  const account = await probeAccount(refreshed.accessToken, context);
+
+  return {
+    account,
+    rotatedRefreshToken: refreshed.rotatedRefreshToken,
+  };
+}
+
+export async function verifyAccessToken(
+  accessToken: string,
+  context: ShipHeroRequestContext = {},
+): Promise<VerifiedAccount> {
+  const cleaned = readProvidedAccessToken(accessToken, context);
+  return probeAccount(cleaned, context);
+}
+
+export function readProvidedAccessToken(
+  accessToken: string,
+  context: ShipHeroRequestContext = {},
+): string {
+  const cleaned = normalizeAccessToken(accessToken);
+  logEvent("info", "shiphero.oauth.access_token.provided", {
+    traceId: context.traceId,
+    operation: context.operation,
+    accessTokenFingerprint: fingerprintSecret(cleaned),
+  });
+  return cleaned;
+}
+
+async function probeAccount(
+  accessToken: string,
+  context: ShipHeroRequestContext = {},
+): Promise<VerifiedAccount> {
   const response = await callShipHero<{
     me?: {
       request_id?: string;
@@ -161,7 +205,7 @@ export async function refreshAccessToken(
   refreshToken: string,
   clientId?: string,
   context: ShipHeroRequestContext = {},
-): Promise<string> {
+): Promise<RefreshedAccessToken> {
   const cleaned = refreshToken.trim();
   if (!cleaned) {
     throw new Error("Enter a ShipHero refresh token.");
@@ -236,13 +280,25 @@ export async function refreshAccessToken(
     );
   }
 
-  return body.access_token;
+  return {
+    accessToken: body.access_token,
+    rotatedRefreshToken: body.refresh_token ?? "",
+    expiresIn: body.expires_in,
+  };
 }
 
 function normalizeClientId(clientId?: string): string {
   const cleaned = (clientId ?? "").trim() || process.env.SHIPHERO_CLIENT_ID?.trim() || "";
   if (!cleaned) {
     throw new Error("Enter the ShipHero OAuth client ID that created this refresh token.");
+  }
+  return cleaned;
+}
+
+function normalizeAccessToken(accessToken?: string): string {
+  const cleaned = (accessToken ?? "").trim();
+  if (!cleaned) {
+    throw new Error("Enter a ShipHero access token.");
   }
   return cleaned;
 }

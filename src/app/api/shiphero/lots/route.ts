@@ -8,7 +8,7 @@ import {
   type RunOptions,
 } from "@/lib/lots";
 import { createTraceId, fingerprintSecret, logEvent, readTraceId } from "@/lib/logging";
-import { createLot, refreshAccessToken } from "@/lib/shiphero";
+import { createLot, readProvidedAccessToken, refreshAccessToken } from "@/lib/shiphero";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -18,36 +18,51 @@ export async function POST(request: Request) {
 
   try {
     const body = (await request.json()) as {
+      authMode?: "refresh" | "access";
       refreshToken?: string;
+      accessToken?: string;
       clientId?: string;
       rows?: LotInputRow[];
       options?: Partial<RunOptions>;
     };
+    const authMode = body.authMode === "access" ? "access" : "refresh";
     const rows = Array.isArray(body.rows) ? body.rows : [];
     const options = normalizeRunOptions(body.options);
 
     logEvent("info", "shiphero.lots.request.received", {
       traceId,
+      authMode,
       rowCount: rows.length,
       dryRun: options.dryRun,
       stopOnError: options.stopOnError,
       throttleMs: options.throttleMs,
       hasClientId: Boolean(body.clientId?.trim()),
       hasRefreshToken: Boolean(body.refreshToken?.trim()),
+      hasAccessToken: Boolean(body.accessToken?.trim()),
       clientIdFingerprint: fingerprintSecret(body.clientId),
       refreshTokenFingerprint: fingerprintSecret(body.refreshToken),
+      accessTokenFingerprint: fingerprintSecret(body.accessToken),
     });
 
     if (!rows.length) {
       throw new Error("No CSV rows were provided.");
     }
 
+    const refreshed =
+      options.dryRun || authMode === "access"
+        ? null
+        : await refreshAccessToken(body.refreshToken ?? "", body.clientId, {
+            traceId,
+            operation: "create-lots",
+          });
     const accessToken = options.dryRun
       ? ""
-      : await refreshAccessToken(body.refreshToken ?? "", body.clientId, {
-          traceId,
-          operation: "create-lots",
-        });
+      : authMode === "access"
+        ? readProvidedAccessToken(body.accessToken ?? "", {
+            traceId,
+            operation: "create-lots",
+          })
+        : refreshed?.accessToken ?? "";
     const results: LotResult[] = [];
     let halted = false;
 
@@ -116,6 +131,7 @@ export async function POST(request: Request) {
 
     logEvent(halted ? "warn" : "info", "shiphero.lots.request.completed", {
       traceId,
+      authMode,
       rowCount: rows.length,
       resultCount: results.length,
       halted,
@@ -123,12 +139,14 @@ export async function POST(request: Request) {
       dryRunCount: results.filter((result) => result.status === "DRY_RUN").length,
       errorCount: results.filter((result) => result.status === "ERROR").length,
       throttledCount: results.filter((result) => result.status === "THROTTLED").length,
+      refreshTokenRotated: Boolean(refreshed?.rotatedRefreshToken),
     });
 
     return NextResponse.json({
       ok: true,
       halted,
       results,
+      rotatedRefreshToken: refreshed?.rotatedRefreshToken ?? "",
       traceId,
     });
   } catch (error) {

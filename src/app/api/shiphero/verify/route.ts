@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { cleanMessage } from "@/lib/lots";
 import { createTraceId, fingerprintSecret, logEvent, readTraceId } from "@/lib/logging";
-import { verifyRefreshToken } from "@/lib/shiphero";
+import { verifyAccessToken, verifyRefreshToken } from "@/lib/shiphero";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -11,33 +11,52 @@ export async function POST(request: Request) {
 
   try {
     const body = (await request.json()) as {
+      authMode?: "refresh" | "access";
       refreshToken?: string;
+      accessToken?: string;
       clientId?: string;
     };
+    const authMode = body.authMode === "access" ? "access" : "refresh";
 
     logEvent("info", "shiphero.verify.request.received", {
       traceId,
+      authMode,
       hasClientId: Boolean(body.clientId?.trim()),
       hasRefreshToken: Boolean(body.refreshToken?.trim()),
+      hasAccessToken: Boolean(body.accessToken?.trim()),
       clientIdFingerprint: fingerprintSecret(body.clientId),
       refreshTokenFingerprint: fingerprintSecret(body.refreshToken),
+      accessTokenFingerprint: fingerprintSecret(body.accessToken),
     });
 
-    const account = await verifyRefreshToken(body.refreshToken ?? "", body.clientId, {
-      traceId,
-      operation: "verify-account",
-    });
+    const result =
+      authMode === "access"
+        ? {
+            account: await verifyAccessToken(body.accessToken ?? "", {
+              traceId,
+              operation: "verify-access-token",
+            }),
+            rotatedRefreshToken: "",
+          }
+        : await verifyRefreshToken(body.refreshToken ?? "", body.clientId, {
+            traceId,
+            operation: "verify-refresh-token",
+          });
 
     logEvent("info", "shiphero.verify.request.succeeded", {
       traceId,
-      accountId: account.accountId,
-      userId: account.userId,
-      shipheroRequestId: account.requestId,
+      authMode,
+      accountId: result.account.accountId,
+      userId: result.account.userId,
+      shipheroRequestId: result.account.requestId,
+      refreshTokenRotated: Boolean(result.rotatedRefreshToken),
     });
 
     return NextResponse.json({
       ok: true,
-      account,
+      authMode,
+      account: result.account,
+      rotatedRefreshToken: result.rotatedRefreshToken,
       traceId,
     });
   } catch (error) {
