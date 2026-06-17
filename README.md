@@ -66,6 +66,8 @@ ShipHero can return a new refresh token during refresh. When that happens, the a
 
 Access token mode skips the refresh-token exchange and sends the pasted access token directly to ShipHero GraphQL. It is useful when a customer needs an immediate one-time run and the refresh token is blocked. Access tokens expire, so refresh token mode is better for repeat use.
 
+The access token field accepts a raw token, a `Bearer <token>` value, or a copied JSON token response that contains `access_token`. The app strips whitespace and extracts the token before calling ShipHero.
+
 ## Retrying after a partial upload
 
 Live uploads default to `Skip existing in ShipHero`, which checks `expiration_lots` by SKU and skips matching lots before creating. A match is same lot name, same SKU, and same expiration when expiration is supplied.

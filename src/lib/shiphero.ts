@@ -8,6 +8,7 @@ import {
 
 const SHIPHERO_API_ENDPOINT = "https://public-api.shiphero.com/graphql";
 const SHIPHERO_TOKEN_ENDPOINT = "https://login.shiphero.com/oauth/token";
+const JWT_TOKEN_PATTERN = /[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/;
 
 type ShipHeroTokenResponse = {
   access_token?: string;
@@ -413,11 +414,46 @@ function normalizeClientId(clientId?: string): string {
 }
 
 function normalizeAccessToken(accessToken?: string): string {
-  const cleaned = (accessToken ?? "").trim();
+  const raw = String(accessToken ?? "").trim();
+  if (!raw) {
+    throw new Error("Enter a ShipHero access token.");
+  }
+
+  const source = extractAccessTokenFromJson(raw) || raw;
+  const jwtMatch = source.match(JWT_TOKEN_PATTERN);
+  if (jwtMatch?.[0]) {
+    return jwtMatch[0];
+  }
+
+  const withoutBearer = source.replace(/^Bearer\s+/i, "");
+  const tokenishSegment = withoutBearer.split(/\s+-\s+/).pop() ?? withoutBearer;
+  const cleaned = tokenishSegment
+    .trim()
+    .replace(/^["'`]+|["'`,;]+$/g, "")
+    .replace(/^Bearer\s+/i, "")
+    .replace(/\s+/g, "");
+
   if (!cleaned) {
     throw new Error("Enter a ShipHero access token.");
   }
   return cleaned;
+}
+
+function extractAccessTokenFromJson(raw: string): string {
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (isRecord(parsed) && typeof parsed.access_token === "string") {
+      return parsed.access_token;
+    }
+  } catch {
+    // Users often paste just the token or a token with labels instead of JSON.
+  }
+
+  return raw.match(/["']access_token["']\s*:\s*["']([^"']+)["']/i)?.[1] ?? "";
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
 
 function normalizeComparable(value?: string): string {

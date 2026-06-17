@@ -408,7 +408,7 @@ export default function Home() {
                 <textarea
                   id="access-token"
                   className="min-h-28 w-full resize-y rounded-md border border-zinc-300 bg-white p-3 font-mono text-sm outline-none ring-teal-600 transition focus:ring-2"
-                  placeholder="Paste access token"
+                  placeholder="Paste raw token, Bearer token, or token JSON"
                   value={accessToken}
                   onChange={(event) => updateAccessToken(event.target.value)}
                   spellCheck={false}
