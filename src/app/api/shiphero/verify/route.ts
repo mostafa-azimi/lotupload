@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { cleanMessage } from "@/lib/lots";
 import { createTraceId, fingerprintSecret, logEvent, readTraceId } from "@/lib/logging";
-import { verifyAccessToken, verifyRefreshToken } from "@/lib/shiphero";
+import { verifyRefreshToken } from "@/lib/shiphero";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -11,41 +11,27 @@ export async function POST(request: Request) {
 
   try {
     const body = (await request.json()) as {
-      authMode?: "refresh" | "access";
       refreshToken?: string;
-      accessToken?: string;
       clientId?: string;
     };
-    const authMode = body.authMode === "access" ? "access" : "refresh";
 
     logEvent("info", "shiphero.verify.request.received", {
       traceId,
-      authMode,
+      authMode: "refresh",
       hasClientId: Boolean(body.clientId?.trim()),
       hasRefreshToken: Boolean(body.refreshToken?.trim()),
-      hasAccessToken: Boolean(body.accessToken?.trim()),
       clientIdFingerprint: fingerprintSecret(body.clientId),
       refreshTokenFingerprint: fingerprintSecret(body.refreshToken),
-      accessTokenFingerprint: fingerprintSecret(body.accessToken),
     });
 
-    const result =
-      authMode === "access"
-        ? {
-            account: await verifyAccessToken(body.accessToken ?? "", {
-              traceId,
-              operation: "verify-access-token",
-            }),
-            rotatedRefreshToken: "",
-          }
-        : await verifyRefreshToken(body.refreshToken ?? "", body.clientId, {
-            traceId,
-            operation: "verify-refresh-token",
-          });
+    const result = await verifyRefreshToken(body.refreshToken ?? "", body.clientId, {
+      traceId,
+      operation: "verify-refresh-token",
+    });
 
     logEvent("info", "shiphero.verify.request.succeeded", {
       traceId,
-      authMode,
+      authMode: "refresh",
       accountId: result.account.accountId,
       userId: result.account.userId,
       shipheroRequestId: result.account.requestId,
@@ -54,7 +40,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json({
       ok: true,
-      authMode,
+      authMode: "refresh",
       account: result.account,
       rotatedRefreshToken: result.rotatedRefreshToken,
       traceId,

@@ -13,8 +13,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "ShipHero Bulk Lot Creator",
-  description: "Create ShipHero lots from a CSV with refresh-token account verification.",
+  title: "ShipHero Bulk Updater",
+  description: "Run ShipHero bulk CSV updates with refresh-token account verification.",
 };
 
 export default function RootLayout({

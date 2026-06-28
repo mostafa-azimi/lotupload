@@ -1,5 +1,7 @@
 @import "tailwindcss";
 
+@custom-variant dark (&:where(.dark, .dark *));
+
 :root {
   --background: #fafaf9;
   --foreground: #171717;
@@ -57,9 +59,20 @@ button:disabled {
   color: #18181b;
 }
 
+.dark .btn-secondary {
+  border-color: #3f3f46;
+  background: #18181b;
+  color: #f4f4f5;
+}
+
 .btn-secondary:hover:not(:disabled) {
   border-color: #0f766e;
   background: #f0fdfa;
+}
+
+.dark .btn-secondary:hover:not(:disabled) {
+  border-color: #14b8a6;
+  background: #134e4a;
 }
 
 .btn-ghost {
@@ -68,9 +81,18 @@ button:disabled {
   color: #3f3f46;
 }
 
+.dark .btn-ghost {
+  color: #d4d4d8;
+}
+
 .btn-ghost:hover:not(:disabled) {
   background: #f4f4f5;
   color: #18181b;
+}
+
+.dark .btn-ghost:hover:not(:disabled) {
+  background: #27272a;
+  color: #fafafa;
 }
 
 .field-label {
@@ -79,4 +101,103 @@ button:disabled {
   font-size: 0.8125rem;
   font-weight: 600;
   color: #3f3f46;
+}
+
+.dark .field-label {
+  color: #d4d4d8;
+}
+
+.field-input,
+.field-textarea {
+  width: 100%;
+  border-radius: 0.375rem;
+  border: 1px solid #d4d4d8;
+  background: #ffffff;
+  color: #18181b;
+  font-size: 0.875rem;
+  outline: none;
+  transition:
+    border-color 150ms ease,
+    box-shadow 150ms ease,
+    background-color 150ms ease;
+}
+
+.field-input {
+  height: 2.5rem;
+  padding: 0 0.75rem;
+}
+
+.field-textarea {
+  resize: vertical;
+  padding: 0.75rem;
+}
+
+.field-input:focus,
+.field-textarea:focus {
+  border-color: #0f766e;
+  box-shadow: 0 0 0 2px #0f766e;
+}
+
+.dark .field-input,
+.dark .field-textarea {
+  border-color: #3f3f46;
+  background: #09090b;
+  color: #f4f4f5;
+}
+
+.dark .field-input:focus,
+.dark .field-textarea:focus {
+  border-color: #14b8a6;
+  box-shadow: 0 0 0 2px #14b8a6;
+}
+
+.tool-tab {
+  display: inline-flex;
+  min-height: 2.5rem;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  border-radius: 0.375rem;
+  border: 1px solid #d4d4d8;
+  background: #ffffff;
+  padding: 0.5rem 0.75rem;
+  color: #3f3f46;
+  font-size: 0.875rem;
+  font-weight: 700;
+  transition:
+    background-color 150ms ease,
+    border-color 150ms ease,
+    color 150ms ease;
+}
+
+.tool-tab:hover {
+  border-color: #0f766e;
+  color: #0f766e;
+}
+
+.tool-tab-active {
+  border-color: #0f766e;
+  background: #0f766e;
+  color: #ffffff;
+}
+
+.tool-tab-active:hover {
+  color: #ffffff;
+}
+
+.dark .tool-tab {
+  border-color: #3f3f46;
+  background: #18181b;
+  color: #d4d4d8;
+}
+
+.dark .tool-tab:hover {
+  border-color: #14b8a6;
+  color: #99f6e4;
+}
+
+.dark .tool-tab-active {
+  border-color: #14b8a6;
+  background: #0f766e;
+  color: #ffffff;
 }

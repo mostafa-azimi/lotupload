@@ -1,51 +1,92 @@
-# ShipHero Bulk Lot Creator
+# ShipHero Bulk Updater
 
-This is a Vercel-ready Next.js app for creating ShipHero lots from a CSV.
+Vercel-ready Next.js app for safe ShipHero bulk CSV updates.
 
-## What it does
+## Tools
 
-- Uses a ShipHero refresh token, not a pasted access token.
-- Sends the matching ShipHero OAuth client ID during token refresh.
-- Keeps the browser session updated when ShipHero rotates the refresh token.
-- Can use a direct ShipHero access token for short emergency runs.
-- Skips rows already marked as created in the current browser session when rerunning the same CSV.
-- Checks ShipHero for existing matching lots before live creation when `Skip existing in ShipHero` is on.
-- Verifies the token with ShipHero and shows the connected email, user ID, account ID, and request ID.
-- Downloads a CSV template with the accepted columns.
-- Uploads a CSV, validates rows in dry-run mode, then creates lots in live mode.
-- Processes rows in small batches so the browser stays responsive.
-- Exports a result CSV with created lot IDs, request IDs, and row-level errors.
-- Writes safe server logs with trace IDs for OAuth refresh, account verification, and lot creation.
+- Create lots and expirations in bulk.
+- Update location pick priority in bulk.
+- Set locations pickable or non-pickable in bulk.
+- Set locations sellable or non-sellable in bulk.
+- Add or update product case barcodes in bulk.
 
-## CSV columns
+## Login
 
-Required:
+The app uses refresh-token login only. Operators enter:
 
-- `name`
-- `sku`
+- ShipHero OAuth client ID
+- ShipHero refresh token
 
-Optional:
+The server refreshes the token through ShipHero, verifies the account with `me`, and uses the short-lived access token only inside server routes. Pasted access-token login is not part of the app.
 
-- `expires_at`
-- `is_active`
-- `customer_account_id`
-- `notes`
+Refresh tokens must be refreshed with the same OAuth client ID that created them. ShipHero can rotate refresh tokens during a refresh; when that happens, the app updates the current browser session.
 
-`customer_account_id` is usually blank when the refresh token belongs to the child account. `notes` is included for operator reference and is not sent to ShipHero.
+## CSV Templates
 
-Accepted date examples:
+Use the Template CSV button inside each tool.
 
-- `2026-12-31`
-- `12/31/2026`
-- `2026-12-31 13:30`
-- `2026-12-31T13:30:00`
+Lots:
 
-Accepted boolean examples:
+```csv
+sku,name,expires_at,is_active,customer_account_id,notes
+SKU-12345,LOT-2026-001,2026-12-31,true,,
+```
 
-- true: `true`, `yes`, `y`, `1`, `active`, `enabled`
-- false: `false`, `no`, `n`, `0`, `inactive`, `disabled`
+Location pick priority:
 
-## Local development
+```csv
+location_id,location_name,warehouse_id,pick_priority,notes
+,A-01-01,V2FyZWhvdXNlOjEyMzQ=,10,
+```
+
+Location pickable:
+
+```csv
+location_id,location_name,warehouse_id,pickable,notes
+,A-01-01,V2FyZWhvdXNlOjEyMzQ=,true,
+```
+
+Location sellable:
+
+```csv
+location_id,location_name,warehouse_id,sellable,notes
+,A-01-01,V2FyZWhvdXNlOjEyMzQ=,false,
+```
+
+Product case barcodes:
+
+```csv
+sku,case_barcode,case_quantity,customer_account_id,notes
+SKU-12345,CASE-SKU-12345-12,12,,
+```
+
+For location tools, `location_id` is safest. If using `location_name`, include `warehouse_id` when possible.
+
+## Error Handling
+
+Every result row includes:
+
+- status
+- ShipHero request ID when available
+- message
+- next_step
+
+Recommended retry flow:
+
+1. Run dry mode first.
+2. Run live mode after confirming the connected account.
+3. If errors happen, download the results CSV.
+4. Filter to `ERROR` or `THROTTLED`.
+5. Follow the `next_step` column.
+6. Rerun only the fixed rows.
+
+Live runs are idempotent where possible:
+
+- Lots can skip existing matching lots.
+- Location updates skip rows already set to the requested value.
+- Product case barcode updates merge with existing cases and skip exact matches.
+
+## Local Development
 
 ```bash
 npm install
@@ -54,44 +95,22 @@ npm run dev
 
 Open `http://localhost:3000`.
 
-## ShipHero OAuth client ID
+## Deploy To Vercel
 
-Refresh tokens must be refreshed with the same OAuth client ID that created them. The app does not hardcode a client ID. Paste the matching client ID into the token panel before verifying the token.
-
-If every operator will use the same OAuth client, you can optionally set `SHIPHERO_CLIENT_ID` in Vercel as a server-side fallback. Otherwise, leave it unset and have each operator enter the client ID for their refresh token.
-
-ShipHero can return a new refresh token during refresh. When that happens, the app updates the token field in the current browser session and uses the newest token for later batches.
-
-## Access token mode
-
-Access token mode skips the refresh-token exchange and sends the pasted access token directly to ShipHero GraphQL. It is useful when a customer needs an immediate one-time run and the refresh token is blocked. Access tokens expire, so refresh token mode is better for repeat use.
-
-The access token field accepts a raw token, a `Bearer <token>` value, or a copied JSON token response that contains `access_token`. The app strips whitespace and extracts the token before calling ShipHero.
-
-## Retrying after a partial upload
-
-Live uploads default to `Skip existing in ShipHero`, which checks `expiration_lots` by SKU and skips matching lots before creating. A match is same lot name, same SKU, and same expiration when expiration is supplied.
-
-If a live upload partially succeeds and then errors, keep the page open. The app also remembers rows that returned `CREATED` in that browser session and skips them on the next live run, so rerunning the same CSV retries the remaining rows only.
-
-If the page was refreshed or closed, keep `Skip existing in ShipHero` on before retrying. If ShipHero cannot look up existing lots for a row, use the results CSV to remove rows with `CREATED` before retrying.
-
-## Deploy to Vercel
-
-No environment variables are required for the default setup. The operator pastes the refresh token into the app, the app sends it only to the server route for the ShipHero token exchange, and it is not stored by the app.
+No environment variables are required for the default setup. The operator enters the OAuth client ID and refresh token in the app, and the app does not store them server-side.
 
 Recommended before customer use:
 
-- Deploy the app behind Vercel authentication, password protection, or another access control layer.
-- Run a dry check before switching off dry run.
-- Confirm the verified account is the intended child account before live creation.
+- Deploy behind Vercel authentication, password protection, or another access control layer.
+- Run dry mode before live mode.
+- Confirm the verified account is the intended child account before live updates.
 
-## Debug logs
+## Logs
 
-Every verify/upload request gets a trace ID. The UI shows the latest trace ID, and Vercel logs include entries prefixed with:
+Every verify and bulk request gets a trace ID. The UI shows the latest trace ID, and Vercel logs include entries prefixed with:
 
 ```text
-[shiphero-lot-upload]
+[shiphero-bulk-updater]
 ```
 
-The logs include HTTP status, OAuth error text, row counts, ShipHero request IDs when available, and safe fingerprints for the refresh token/client ID. They do not log refresh tokens or access tokens.
+Logs include operation ID, row counts, safe token/client fingerprints, HTTP status, ShipHero request IDs, row status, and error summaries. Refresh tokens and access tokens are not logged.

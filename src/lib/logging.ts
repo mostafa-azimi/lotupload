@@ -22,7 +22,7 @@ export function logEvent(level: LogLevel, event: string, details: LogDetails = {
     event,
     ...details,
   });
-  const line = `[shiphero-lot-upload] ${JSON.stringify(payload)}`;
+  const line = `[shiphero-bulk-updater] ${JSON.stringify(payload)}`;
 
   if (level === "error") {
     console.error(line);

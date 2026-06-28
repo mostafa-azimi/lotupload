@@ -1,6 +1,6 @@
 export const TEMPLATE_HEADERS = [
-  "name",
   "sku",
+  "name",
   "expires_at",
   "is_active",
   "customer_account_id",
@@ -78,8 +78,8 @@ const HEADER_ALIASES: Record<CanonicalLotField, string[]> = {
 export const SAMPLE_CSV = toCsv([
   [...TEMPLATE_HEADERS],
   [
-    "LOT-2026-001",
     "SKU-12345",
+    "LOT-2026-001",
     "2026-12-31",
     "true",
     "",

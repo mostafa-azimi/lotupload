@@ -1,3 +1,7 @@
+import type {
+  LocationUpdatePayload,
+  ProductCaseBarcodePayload,
+} from "@/lib/bulk";
 import { cleanMessage, type LotPayload } from "@/lib/lots";
 import {
   attachTraceId,
@@ -8,7 +12,6 @@ import {
 
 const SHIPHERO_API_ENDPOINT = "https://public-api.shiphero.com/graphql";
 const SHIPHERO_TOKEN_ENDPOINT = "https://login.shiphero.com/oauth/token";
-const JWT_TOKEN_PATTERN = /[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/;
 
 type ShipHeroTokenResponse = {
   access_token?: string;
@@ -95,6 +98,42 @@ export type CreateLotResponse = {
   lot?: CreatedLot;
 };
 
+export type ShipHeroLocation = {
+  id?: string;
+  legacy_id?: string | number;
+  warehouse_id?: string;
+  name?: string;
+  pickable?: boolean;
+  sellable?: boolean;
+  pick_priority?: number;
+};
+
+export type LocationUpdateResponse = {
+  request_id?: string;
+  complexity?: string | number;
+  location?: ShipHeroLocation;
+};
+
+export type ProductCase = {
+  case_barcode?: string;
+  case_quantity?: number;
+};
+
+export type ProductWithCases = {
+  id?: string;
+  name?: string;
+  sku?: string;
+  cases?: ProductCase[];
+};
+
+export type ProductCaseBarcodeResponse = {
+  request_id?: string;
+  complexity?: string | number;
+  product?: ProductWithCases;
+  skipped: boolean;
+  previousQuantity?: number;
+};
+
 export async function verifyRefreshToken(
   refreshToken: string,
   clientId?: string,
@@ -110,27 +149,6 @@ export async function verifyRefreshToken(
     account,
     rotatedRefreshToken: refreshed.rotatedRefreshToken,
   };
-}
-
-export async function verifyAccessToken(
-  accessToken: string,
-  context: ShipHeroRequestContext = {},
-): Promise<VerifiedAccount> {
-  const cleaned = readProvidedAccessToken(accessToken, context);
-  return probeAccount(cleaned, context);
-}
-
-export function readProvidedAccessToken(
-  accessToken: string,
-  context: ShipHeroRequestContext = {},
-): string {
-  const cleaned = normalizeAccessToken(accessToken);
-  logEvent("info", "shiphero.oauth.access_token.provided", {
-    traceId: context.traceId,
-    operation: context.operation,
-    accessTokenFingerprint: fingerprintSecret(cleaned),
-  });
-  return cleaned;
 }
 
 async function probeAccount(
@@ -304,6 +322,314 @@ export async function findExistingLot(
   return null;
 }
 
+export async function resolveLocation(
+  accessToken: string,
+  payload: LocationUpdatePayload,
+  context: ShipHeroRequestContext = {},
+): Promise<LocationUpdateResponse> {
+  if (payload.location_id) {
+    const response = await callShipHero<{
+      location?: {
+        request_id?: string;
+        complexity?: string | number;
+        data?: ShipHeroLocation;
+      };
+    }>({
+      accessToken,
+      query: [
+        "query LocationById($id: String) {",
+        "  location(id: $id) {",
+        "    request_id",
+        "    complexity",
+        "    data {",
+        "      id",
+        "      legacy_id",
+        "      warehouse_id",
+        "      name",
+        "      pickable",
+        "      sellable",
+        "      pick_priority",
+        "    }",
+        "  }",
+        "}",
+      ].join("\n"),
+      variables: {
+        id: payload.location_id,
+      },
+      operationName: "LocationById",
+      context,
+    });
+
+    const result = response.data?.location;
+    if (!result?.data?.id) {
+      throw new Error(`Location not found for location_id ${payload.location_id}.`);
+    }
+
+    return {
+      request_id: result.request_id,
+      complexity: result.complexity,
+      location: result.data,
+    };
+  }
+
+  if (!payload.location_name) {
+    throw new Error("Missing required location_id or location_name.");
+  }
+
+  const response = await callShipHero<{
+    locations?: {
+      request_id?: string;
+      complexity?: string | number;
+      data?: {
+        edges?: Array<{
+          node?: ShipHeroLocation;
+        }>;
+      };
+    };
+  }>({
+    accessToken,
+    query: [
+      "query LocationsByName($name: String, $warehouseId: String) {",
+      "  locations(name: $name, warehouse_id: $warehouseId) {",
+      "    request_id",
+      "    complexity",
+      "    data(first: 2) {",
+      "      edges {",
+      "        node {",
+      "          id",
+      "          legacy_id",
+      "          warehouse_id",
+      "          name",
+      "          pickable",
+      "          sellable",
+      "          pick_priority",
+      "        }",
+      "      }",
+      "    }",
+      "  }",
+      "}",
+    ].join("\n"),
+    variables: {
+      name: payload.location_name,
+      warehouseId: payload.warehouse_id ?? null,
+    },
+    operationName: "LocationsByName",
+    context,
+  });
+
+  const result = response.data?.locations;
+  const locations = (result?.data?.edges ?? [])
+    .map((edge) => edge.node)
+    .filter((location): location is ShipHeroLocation => Boolean(location?.id));
+
+  if (!locations.length) {
+    throw new Error(`Location not found for location_name ${payload.location_name}.`);
+  }
+  if (locations.length > 1) {
+    throw new Error(
+      `Multiple locations matched ${payload.location_name}. Add location_id or warehouse_id to the CSV.`,
+    );
+  }
+
+  return {
+    request_id: result?.request_id,
+    complexity: result?.complexity,
+    location: locations[0],
+  };
+}
+
+export async function updateLocation(
+  accessToken: string,
+  data: {
+    location_id: string;
+    pick_priority?: number;
+    pickable?: boolean;
+    sellable?: boolean;
+  },
+  context: ShipHeroRequestContext = {},
+): Promise<LocationUpdateResponse> {
+  const response = await callShipHero<{
+    location_update?: LocationUpdateResponse;
+  }>({
+    accessToken,
+    query: [
+      "mutation UpdateLocation($data: UpdateLocationInput!) {",
+      "  location_update(data: $data) {",
+      "    request_id",
+      "    complexity",
+      "    location {",
+      "      id",
+      "      legacy_id",
+      "      warehouse_id",
+      "      name",
+      "      pickable",
+      "      sellable",
+      "      pick_priority",
+      "    }",
+      "  }",
+      "}",
+    ].join("\n"),
+    variables: {
+      data,
+    },
+    operationName: "UpdateLocation",
+    context,
+  });
+
+  const mutation = response.data?.location_update;
+  if (!mutation?.location?.id) {
+    throw new Error("ShipHero did not return an updated location.");
+  }
+
+  return mutation;
+}
+
+export async function updateProductCaseBarcode(
+  accessToken: string,
+  payload: ProductCaseBarcodePayload,
+  context: ShipHeroRequestContext = {},
+): Promise<ProductCaseBarcodeResponse> {
+  const productResult = await getProductWithCases(accessToken, payload, {
+    ...context,
+    operation: context.operation ?? "product-case-lookup",
+  });
+  const product = productResult.product;
+  if (!product?.sku) {
+    throw new Error(`Product not found for sku ${payload.sku}.`);
+  }
+
+  const existingCases = product.cases ?? [];
+  const existingCase = existingCases.find(
+    (productCase) =>
+      normalizeComparable(productCase.case_barcode) === normalizeComparable(payload.case_barcode),
+  );
+
+  if (existingCase?.case_quantity === payload.case_quantity) {
+    return {
+      request_id: productResult.request_id,
+      complexity: productResult.complexity,
+      product,
+      skipped: true,
+      previousQuantity: existingCase.case_quantity,
+    };
+  }
+
+  const cases = [
+    ...existingCases
+      .filter(
+        (productCase) =>
+          normalizeComparable(productCase.case_barcode) !==
+          normalizeComparable(payload.case_barcode),
+      )
+      .map((productCase) => ({
+        case_barcode: productCase.case_barcode ?? "",
+        case_quantity: Number(productCase.case_quantity ?? 0),
+      }))
+      .filter((productCase) => productCase.case_barcode && productCase.case_quantity > 0),
+    {
+      case_barcode: payload.case_barcode,
+      case_quantity: payload.case_quantity,
+    },
+  ];
+
+  const response = await callShipHero<{
+    product_update?: {
+      request_id?: string;
+      complexity?: string | number;
+      product?: ProductWithCases;
+    };
+  }>({
+    accessToken,
+    query: [
+      "mutation UpdateProductCases($data: UpdateProductInput!) {",
+      "  product_update(data: $data) {",
+      "    request_id",
+      "    complexity",
+      "    product {",
+      "      id",
+      "      name",
+      "      sku",
+      "      cases {",
+      "        case_barcode",
+      "        case_quantity",
+      "      }",
+      "    }",
+      "  }",
+      "}",
+    ].join("\n"),
+    variables: {
+      data: {
+        sku: payload.sku,
+        customer_account_id: payload.customer_account_id,
+        cases,
+      },
+    },
+    operationName: "UpdateProductCases",
+    context,
+  });
+
+  const mutation = response.data?.product_update;
+  if (!mutation?.product?.sku) {
+    throw new Error("ShipHero did not return an updated product.");
+  }
+
+  return {
+    ...mutation,
+    skipped: false,
+    previousQuantity: existingCase?.case_quantity,
+  };
+}
+
+async function getProductWithCases(
+  accessToken: string,
+  payload: ProductCaseBarcodePayload,
+  context: ShipHeroRequestContext = {},
+): Promise<{
+  request_id?: string;
+  complexity?: string | number;
+  product?: ProductWithCases;
+}> {
+  const response = await callShipHero<{
+    product?: {
+      request_id?: string;
+      complexity?: string | number;
+      data?: ProductWithCases;
+    };
+  }>({
+    accessToken,
+    query: [
+      "query ProductCases($sku: String, $customerAccountId: String) {",
+      "  product(sku: $sku, customer_account_id: $customerAccountId) {",
+      "    request_id",
+      "    complexity",
+      "    data {",
+      "      id",
+      "      name",
+      "      sku",
+      "      cases {",
+      "        case_barcode",
+      "        case_quantity",
+      "      }",
+      "    }",
+      "  }",
+      "}",
+    ].join("\n"),
+    variables: {
+      sku: payload.sku,
+      customerAccountId: payload.customer_account_id ?? null,
+    },
+    operationName: "ProductCases",
+    context,
+  });
+
+  const result = response.data?.product;
+  return {
+    request_id: result?.request_id,
+    complexity: result?.complexity,
+    product: result?.data,
+  };
+}
+
 function isSameLot(payload: LotPayload, lot: ExistingLot): boolean {
   const sameName = normalizeComparable(payload.name) === normalizeComparable(lot.name);
   const sameSku = normalizeComparable(payload.sku) === normalizeComparable(lot.sku);
@@ -411,49 +737,6 @@ function normalizeClientId(clientId?: string): string {
     throw new Error("Enter the ShipHero OAuth client ID that created this refresh token.");
   }
   return cleaned;
-}
-
-function normalizeAccessToken(accessToken?: string): string {
-  const raw = String(accessToken ?? "").trim();
-  if (!raw) {
-    throw new Error("Enter a ShipHero access token.");
-  }
-
-  const source = extractAccessTokenFromJson(raw) || raw;
-  const jwtMatch = source.match(JWT_TOKEN_PATTERN);
-  if (jwtMatch?.[0]) {
-    return jwtMatch[0];
-  }
-
-  const withoutBearer = source.replace(/^Bearer\s+/i, "");
-  const tokenishSegment = withoutBearer.split(/\s+-\s+/).pop() ?? withoutBearer;
-  const cleaned = tokenishSegment
-    .trim()
-    .replace(/^["'`]+|["'`,;]+$/g, "")
-    .replace(/^Bearer\s+/i, "")
-    .replace(/\s+/g, "");
-
-  if (!cleaned) {
-    throw new Error("Enter a ShipHero access token.");
-  }
-  return cleaned;
-}
-
-function extractAccessTokenFromJson(raw: string): string {
-  try {
-    const parsed: unknown = JSON.parse(raw);
-    if (isRecord(parsed) && typeof parsed.access_token === "string") {
-      return parsed.access_token;
-    }
-  } catch {
-    // Users often paste just the token or a token with labels instead of JSON.
-  }
-
-  return raw.match(/["']access_token["']\s*:\s*["']([^"']+)["']/i)?.[1] ?? "";
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
 
 function normalizeComparable(value?: string): string {
