@@ -45,7 +45,7 @@ Lots and product case barcode updates use the selected child account by sending 
 
 ## CSV Templates
 
-Use the Template CSV button inside each tool.
+Use the Templates button in the app header, or open `/templates`, to download each CSV format.
 
 Lots:
 

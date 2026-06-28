@@ -22,6 +22,7 @@ import {
   UsersRound,
   XCircle,
 } from "lucide-react";
+import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ChangeEvent, ReactNode } from "react";
 import {
@@ -30,7 +31,6 @@ import {
   getOperationConfig,
   parseBulkCsv,
   resultsToCsv,
-  templateCsvForOperation,
   type BulkInputRow,
   type BulkOperationId,
   type BulkResult,
@@ -624,13 +624,6 @@ export default function Home() {
     addLog("Login cleared from this browser session.");
   }
 
-  function downloadTemplate() {
-    downloadText(
-      operation.templateFileName,
-      templateCsvForOperation(operationId),
-    );
-  }
-
   function downloadResults() {
     downloadText(operation.resultsFileName, resultsToCsv(results));
   }
@@ -898,18 +891,24 @@ export default function Home() {
                 Connect ShipHero
               </h1>
             </div>
-            <button
-              className="btn-secondary"
-              type="button"
-              onClick={() => changeTheme(theme === "dark" ? "light" : "dark")}
-            >
-              {theme === "dark" ? (
-                <Sun className="size-4" aria-hidden />
-              ) : (
-                <Moon className="size-4" aria-hidden />
-              )}
-              {theme === "dark" ? "Light" : "Dark"}
-            </button>
+            <div className="flex flex-wrap justify-end gap-2">
+              <Link className="btn-secondary" href="/templates">
+                <Download className="size-4" aria-hidden />
+                Templates
+              </Link>
+              <button
+                className="btn-secondary"
+                type="button"
+                onClick={() => changeTheme(theme === "dark" ? "light" : "dark")}
+              >
+                {theme === "dark" ? (
+                  <Sun className="size-4" aria-hidden />
+                ) : (
+                  <Moon className="size-4" aria-hidden />
+                )}
+                {theme === "dark" ? "Light" : "Dark"}
+              </button>
+            </div>
           </div>
         </section>
 
@@ -954,6 +953,10 @@ export default function Home() {
                 <KeyRound className="size-4" aria-hidden />
                 Switch account
               </button>
+              <Link className="btn-secondary" href="/templates">
+                <Download className="size-4" aria-hidden />
+                Templates
+              </Link>
               <button
                 className="btn-secondary"
                 type="button"
@@ -965,14 +968,6 @@ export default function Home() {
                   <Moon className="size-4" aria-hidden />
                 )}
                 {theme === "dark" ? "Light" : "Dark"}
-              </button>
-              <button
-                className="btn-secondary"
-                type="button"
-                onClick={downloadTemplate}
-              >
-                <Download className="size-4" aria-hidden />
-                Template CSV
               </button>
               <button
                 className="btn-primary"
@@ -1124,7 +1119,7 @@ export default function Home() {
               <textarea
                 id="csv-paste"
                 className="field-textarea min-h-28 font-mono"
-                placeholder={templateCsvForOperation(operationId)}
+                placeholder="Paste CSV rows here"
                 value={csvText}
                 onChange={(event) => setCsvText(event.target.value)}
                 spellCheck={false}
