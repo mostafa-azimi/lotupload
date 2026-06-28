@@ -64,7 +64,8 @@ function sanitizeLogObject(details: LogDetails): LogDetails {
 function sanitizeLogValue(key: string, value: unknown): unknown {
   if (
     /token|authorization|secret/i.test(key) &&
-    !/fingerprint|present|has/i.test(key)
+    !/fingerprint|present|has/i.test(key) &&
+    typeof value === "string"
   ) {
     return "[redacted]";
   }
