@@ -55,7 +55,12 @@ export type VerifiedAccount = {
   email: string;
   userId: string;
   accountId: string;
+  accountLegacyId?: string | number;
+  username?: string;
+  is3pl: boolean;
   requestId: string;
+  customers: ShipHeroCustomerAccount[];
+  customerPageLimitReached?: boolean;
 };
 
 export type VerifyRefreshTokenResult = {
@@ -74,6 +79,43 @@ export type CreatedLot = {
 
 export type ExistingLot = CreatedLot & {
   account_id?: string;
+};
+
+export type ShipHeroCustomerAccount = {
+  id: string;
+  legacyId?: string | number;
+  email?: string;
+  username?: string;
+  displayName: string;
+};
+
+type CustomerAccountNode = {
+  id?: string;
+  legacy_id?: string | number;
+  email?: string;
+  username?: string;
+};
+
+type CustomerAccountsResponse = {
+  account?: {
+    request_id?: string;
+    complexity?: string | number;
+    data?: {
+      customers?: {
+        pageInfo?: {
+          hasNextPage?: boolean;
+          endCursor?: string;
+        };
+        edges?: Array<{
+          node?: CustomerAccountNode;
+        }>;
+      };
+    };
+  };
+};
+
+type CustomerAccountNodeWithId = CustomerAccountNode & {
+  id: string;
 };
 
 type ExistingLotsResponse = {
@@ -126,6 +168,8 @@ export type ProductWithCases = {
   cases?: ProductCase[];
 };
 
+export type ProductCaseCache = Map<string, ProductWithCases>;
+
 export type ProductCaseBarcodeResponse = {
   request_id?: string;
   complexity?: string | number;
@@ -166,6 +210,17 @@ async function probeAccount(
         };
       };
     };
+    account?: {
+      request_id?: string;
+      complexity?: string | number;
+      data?: {
+        id?: string;
+        legacy_id?: string | number;
+        email?: string;
+        username?: string;
+        is_3pl?: boolean;
+      };
+    };
   }>({
     accessToken,
     query: [
@@ -179,6 +234,17 @@ async function probeAccount(
       "      account { id }",
       "    }",
       "  }",
+      "  account {",
+      "    request_id",
+      "    complexity",
+      "    data {",
+      "      id",
+      "      legacy_id",
+      "      email",
+      "      username",
+      "      is_3pl",
+      "    }",
+      "  }",
       "}",
     ].join("\n"),
     variables: {},
@@ -187,16 +253,109 @@ async function probeAccount(
   });
 
   const me = response.data?.me;
-  const data = me?.data;
-  if (!data) {
+  const meData = me?.data;
+  const accountData = response.data?.account?.data;
+  if (!meData && !accountData) {
     throw new Error("ShipHero did not return account details for this token.");
   }
 
+  const is3pl = Boolean(accountData?.is_3pl);
+  const customerResult = is3pl
+    ? await listCustomerAccounts(accessToken, context)
+    : { customers: [], pageLimitReached: false };
+
   return {
-    email: data.email ?? "",
-    userId: data.id ?? "",
-    accountId: data.account?.id ?? "",
-    requestId: me?.request_id ?? "",
+    email: accountData?.email ?? meData?.email ?? "",
+    userId: meData?.id ?? "",
+    accountId: accountData?.id ?? meData?.account?.id ?? "",
+    accountLegacyId: accountData?.legacy_id,
+    username: accountData?.username ?? "",
+    is3pl,
+    requestId: response.data?.account?.request_id ?? me?.request_id ?? "",
+    customers: customerResult.customers,
+    customerPageLimitReached: customerResult.pageLimitReached,
+  };
+}
+
+async function listCustomerAccounts(
+  accessToken: string,
+  context: ShipHeroRequestContext = {},
+): Promise<{
+  customers: ShipHeroCustomerAccount[];
+  pageLimitReached: boolean;
+}> {
+  const customers: ShipHeroCustomerAccount[] = [];
+  let after: string | null = null;
+  const maxPages = 10;
+
+  for (let page = 0; page < maxPages; page += 1) {
+    const response: GraphQLResponse<CustomerAccountsResponse> =
+      await callShipHero<CustomerAccountsResponse>({
+        accessToken,
+        query: [
+          "query CustomerAccounts($after: String) {",
+          "  account {",
+          "    request_id",
+          "    complexity",
+          "    data {",
+          "      customers(first: 100, after: $after) {",
+          "        pageInfo { hasNextPage endCursor }",
+          "        edges {",
+          "          node {",
+          "            id",
+          "            legacy_id",
+          "            email",
+          "            username",
+          "          }",
+          "        }",
+          "      }",
+          "    }",
+          "  }",
+          "}",
+        ].join("\n"),
+        variables: {
+          after,
+        },
+        operationName: "CustomerAccounts",
+        context: {
+          ...context,
+          operation: context.operation ?? "customer-accounts",
+        },
+      });
+
+    const connection = response.data?.account?.data?.customers;
+    const pageCustomers = (connection?.edges ?? [])
+      .map((edge) => edge.node)
+      .filter((node): node is CustomerAccountNodeWithId => Boolean(node?.id))
+      .map((node) => ({
+        id: node.id,
+        legacyId: node.legacy_id,
+        email: node.email,
+        username: node.username,
+        displayName: customerDisplayName(node),
+      }));
+
+    customers.push(...pageCustomers);
+
+    if (!connection?.pageInfo?.hasNextPage) {
+      return {
+        customers: dedupeCustomerAccounts(customers),
+        pageLimitReached: false,
+      };
+    }
+
+    after = connection.pageInfo.endCursor ?? null;
+    if (!after) {
+      return {
+        customers: dedupeCustomerAccounts(customers),
+        pageLimitReached: true,
+      };
+    }
+  }
+
+  return {
+    customers: dedupeCustomerAccounts(customers),
+    pageLimitReached: true,
   };
 }
 
@@ -249,43 +408,46 @@ export async function findExistingLot(
   const maxPages = 5;
 
   for (let page = 0; page < maxPages; page += 1) {
-    const response: GraphQLResponse<ExistingLotsResponse> = await callShipHero<ExistingLotsResponse>({
-      accessToken,
-      query: [
-        "query ExistingLots($sku: String, $after: String) {",
-        "  expiration_lots(sku: $sku) {",
-        "    request_id",
-        "    complexity",
-        "    data(first: 100, after: $after) {",
-        "      pageInfo { hasNextPage endCursor }",
-        "      edges {",
-        "        node {",
-        "          id",
-        "          legacy_id",
-        "          account_id",
-        "          name",
-        "          sku",
-        "          expires_at",
-        "          is_active",
-        "        }",
-        "      }",
-        "    }",
-        "  }",
-        "}",
-      ].join("\n"),
-      variables: {
-        sku: payload.sku,
-        after,
-      },
-      operationName: "ExistingLots",
-      context,
-    });
+    const response: GraphQLResponse<ExistingLotsResponse> =
+      await callShipHero<ExistingLotsResponse>({
+        accessToken,
+        query: [
+          "query ExistingLots($sku: String, $after: String) {",
+          "  expiration_lots(sku: $sku) {",
+          "    request_id",
+          "    complexity",
+          "    data(first: 100, after: $after) {",
+          "      pageInfo { hasNextPage endCursor }",
+          "      edges {",
+          "        node {",
+          "          id",
+          "          legacy_id",
+          "          account_id",
+          "          name",
+          "          sku",
+          "          expires_at",
+          "          is_active",
+          "        }",
+          "      }",
+          "    }",
+          "  }",
+          "}",
+        ].join("\n"),
+        variables: {
+          sku: payload.sku,
+          after,
+        },
+        operationName: "ExistingLots",
+        context,
+      });
 
     const queryResult = response.data?.expiration_lots;
     const edges = queryResult?.data?.edges ?? [];
     const match = edges
       .map((edge) => edge.node)
-      .find((lot): lot is ExistingLot => Boolean(lot && isSameLot(payload, lot)));
+      .find((lot): lot is ExistingLot =>
+        Boolean(lot && isSameLot(payload, lot)),
+      );
 
     if (match) {
       logEvent("info", "shiphero.lots.existing_found", {
@@ -362,7 +524,9 @@ export async function resolveLocation(
 
     const result = response.data?.location;
     if (!result?.data?.id) {
-      throw new Error(`Location not found for location_id ${payload.location_id}.`);
+      throw new Error(
+        `Location not found for location_id ${payload.location_id}.`,
+      );
     }
 
     return {
@@ -423,7 +587,9 @@ export async function resolveLocation(
     .filter((location): location is ShipHeroLocation => Boolean(location?.id));
 
   if (!locations.length) {
-    throw new Error(`Location not found for location_name ${payload.location_name}.`);
+    throw new Error(
+      `Location not found for location_name ${payload.location_name}.`,
+    );
   }
   if (locations.length > 1) {
     throw new Error(
@@ -488,20 +654,29 @@ export async function updateProductCaseBarcode(
   accessToken: string,
   payload: ProductCaseBarcodePayload,
   context: ShipHeroRequestContext = {},
+  productCaseCache?: ProductCaseCache,
 ): Promise<ProductCaseBarcodeResponse> {
-  const productResult = await getProductWithCases(accessToken, payload, {
-    ...context,
-    operation: context.operation ?? "product-case-lookup",
-  });
+  const cacheKey = productCaseCacheKey(payload);
+  const cachedProduct = productCaseCache?.get(cacheKey);
+  const productResult = cachedProduct
+    ? {
+        product: cachedProduct,
+      }
+    : await getProductWithCases(accessToken, payload, {
+        ...context,
+        operation: context.operation ?? "product-case-lookup",
+      });
   const product = productResult.product;
   if (!product?.sku) {
     throw new Error(`Product not found for sku ${payload.sku}.`);
   }
+  productCaseCache?.set(cacheKey, product);
 
   const existingCases = product.cases ?? [];
   const existingCase = existingCases.find(
     (productCase) =>
-      normalizeComparable(productCase.case_barcode) === normalizeComparable(payload.case_barcode),
+      normalizeComparable(productCase.case_barcode) ===
+      normalizeComparable(payload.case_barcode),
   );
 
   if (existingCase?.case_quantity === payload.case_quantity) {
@@ -525,7 +700,10 @@ export async function updateProductCaseBarcode(
         case_barcode: productCase.case_barcode ?? "",
         case_quantity: Number(productCase.case_quantity ?? 0),
       }))
-      .filter((productCase) => productCase.case_barcode && productCase.case_quantity > 0),
+      .filter(
+        (productCase) =>
+          productCase.case_barcode && productCase.case_quantity > 0,
+      ),
     {
       case_barcode: payload.case_barcode,
       case_quantity: payload.case_quantity,
@@ -572,12 +750,19 @@ export async function updateProductCaseBarcode(
   if (!mutation?.product?.sku) {
     throw new Error("ShipHero did not return an updated product.");
   }
+  productCaseCache?.set(cacheKey, mutation.product);
 
   return {
     ...mutation,
     skipped: false,
     previousQuantity: existingCase?.case_quantity,
   };
+}
+
+function productCaseCacheKey(payload: ProductCaseBarcodePayload): string {
+  return [payload.customer_account_id ?? "", payload.sku]
+    .map(normalizeComparable)
+    .join("|");
 }
 
 async function getProductWithCases(
@@ -631,18 +816,33 @@ async function getProductWithCases(
 }
 
 function isSameLot(payload: LotPayload, lot: ExistingLot): boolean {
-  const sameName = normalizeComparable(payload.name) === normalizeComparable(lot.name);
-  const sameSku = normalizeComparable(payload.sku) === normalizeComparable(lot.sku);
+  const sameName =
+    normalizeComparable(payload.name) === normalizeComparable(lot.name);
+  const sameSku =
+    normalizeComparable(payload.sku) === normalizeComparable(lot.sku);
 
   if (!sameName || !sameSku) {
     return false;
+  }
+
+  if (payload.customer_account_id) {
+    const lotAccountId = normalizeComparable(lot.account_id);
+    if (
+      !lotAccountId ||
+      lotAccountId !== normalizeComparable(payload.customer_account_id)
+    ) {
+      return false;
+    }
   }
 
   if (!payload.expires_at) {
     return true;
   }
 
-  return normalizeDateForCompare(payload.expires_at) === normalizeDateForCompare(lot.expires_at);
+  return (
+    normalizeDateForCompare(payload.expires_at) ===
+    normalizeDateForCompare(lot.expires_at)
+  );
 }
 
 export async function refreshAccessToken(
@@ -701,18 +901,22 @@ export async function refreshAccessToken(
   }
 
   const oauthMessage = readOAuthMessage(body, text);
-  logEvent(response.ok && body.access_token ? "info" : "warn", "shiphero.oauth.refresh.response", {
-    traceId: context.traceId,
-    operation: context.operation,
-    httpStatus: response.status,
-    ok: response.ok,
-    hasAccessToken: Boolean(body.access_token),
-    hasNewRefreshToken: Boolean(body.refresh_token),
-    expiresIn: body.expires_in ?? null,
-    oauthError: body.error ?? "",
-    oauthMessage,
-    bodyKeys: Object.keys(body),
-  });
+  logEvent(
+    response.ok && body.access_token ? "info" : "warn",
+    "shiphero.oauth.refresh.response",
+    {
+      traceId: context.traceId,
+      operation: context.operation,
+      httpStatus: response.status,
+      ok: response.ok,
+      hasAccessToken: Boolean(body.access_token),
+      hasNewRefreshToken: Boolean(body.refresh_token),
+      expiresIn: body.expires_in ?? null,
+      oauthError: body.error ?? "",
+      oauthMessage,
+      bodyKeys: Object.keys(body),
+    },
+  );
 
   if (!response.ok || !body.access_token) {
     throw traceError(
@@ -732,20 +936,55 @@ export async function refreshAccessToken(
 }
 
 function normalizeClientId(clientId?: string): string {
-  const cleaned = (clientId ?? "").trim() || process.env.SHIPHERO_CLIENT_ID?.trim() || "";
+  const cleaned =
+    (clientId ?? "").trim() || process.env.SHIPHERO_CLIENT_ID?.trim() || "";
   if (!cleaned) {
-    throw new Error("Enter the ShipHero OAuth client ID that created this refresh token.");
+    throw new Error(
+      "Enter the ShipHero OAuth client ID that created this refresh token.",
+    );
   }
   return cleaned;
 }
 
 function normalizeComparable(value?: string): string {
-  return String(value ?? "").trim().toLowerCase();
+  return String(value ?? "")
+    .trim()
+    .toLowerCase();
+}
+
+function customerDisplayName(customer: {
+  id?: string;
+  legacy_id?: string | number;
+  email?: string;
+  username?: string;
+}): string {
+  return (
+    customer.username?.trim() ||
+    customer.email?.trim() ||
+    (customer.legacy_id ? `Legacy ${customer.legacy_id}` : "") ||
+    customer.id?.trim() ||
+    "Customer account"
+  );
+}
+
+function dedupeCustomerAccounts(
+  customers: ShipHeroCustomerAccount[],
+): ShipHeroCustomerAccount[] {
+  const seen = new Set<string>();
+  return customers.filter((customer) => {
+    if (seen.has(customer.id)) {
+      return false;
+    }
+    seen.add(customer.id);
+    return true;
+  });
 }
 
 function normalizeDateForCompare(value?: string): string {
   const timestamp = Date.parse(String(value ?? ""));
-  return Number.isNaN(timestamp) ? normalizeComparable(value) : String(timestamp);
+  return Number.isNaN(timestamp)
+    ? normalizeComparable(value)
+    : String(timestamp);
 }
 
 async function callShipHero<T>({
@@ -792,34 +1031,49 @@ async function callShipHero<T>({
     throw attachTraceId(error, context.traceId);
   }
 
-  logEvent(response.ok && !body.errors?.length ? "info" : "warn", "shiphero.graphql.response", {
-    traceId: context.traceId,
-    operation: context.operation,
-    operationName,
-    rowNumber: context.rowNumber ?? "",
-    httpStatus: response.status,
-    ok: response.ok,
-    hasGraphQLErrors: Boolean(body.errors?.length),
-    graphQLErrorCount: body.errors?.length ?? 0,
-  });
+  logEvent(
+    response.ok && !body.errors?.length ? "info" : "warn",
+    "shiphero.graphql.response",
+    {
+      traceId: context.traceId,
+      operation: context.operation,
+      operationName,
+      rowNumber: context.rowNumber ?? "",
+      httpStatus: response.status,
+      ok: response.ok,
+      hasGraphQLErrors: Boolean(body.errors?.length),
+      graphQLErrorCount: body.errors?.length ?? 0,
+    },
+  );
 
   if (response.status === 401) {
-    throw traceError("ShipHero rejected the access token with HTTP 401.", context.traceId);
+    throw traceError(
+      "ShipHero rejected the access token with HTTP 401.",
+      context.traceId,
+    );
   }
   if (response.status === 429) {
-    const error = new Error("ShipHero rate limit reached. Wait before retrying.");
+    const error = new Error(
+      "ShipHero rate limit reached. Wait before retrying.",
+    );
     Object.assign(error, { isThrottle: true, traceId: context.traceId });
     throw error;
   }
   if (!response.ok) {
-    throw traceError(`ShipHero HTTP ${response.status}: ${cleanMessage(text)}`, context.traceId);
+    throw traceError(
+      `ShipHero HTTP ${response.status}: ${cleanMessage(text)}`,
+      context.traceId,
+    );
   }
 
   throwIfGraphQLErrors(body, context.traceId);
   return body;
 }
 
-function throwIfGraphQLErrors(response: GraphQLResponse<unknown>, traceId?: string) {
+function throwIfGraphQLErrors(
+  response: GraphQLResponse<unknown>,
+  traceId?: string,
+) {
   if (!response.errors?.length) {
     return;
   }
@@ -883,7 +1137,10 @@ function parseJson<T>(text: string, label: string): T {
   }
 }
 
-function readOAuthMessage(body: ShipHeroTokenResponse, fallbackText: string): string {
+function readOAuthMessage(
+  body: ShipHeroTokenResponse,
+  fallbackText: string,
+): string {
   return (
     body.error_description ??
     body.error ??

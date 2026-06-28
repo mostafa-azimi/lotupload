@@ -83,7 +83,7 @@ export const SAMPLE_CSV = toCsv([
     "2026-12-31",
     "true",
     "",
-    "customer_account_id is usually blank when using a child-account refresh token",
+    "Leave blank when using a saved 3PL child profile",
   ],
 ]);
 
@@ -126,8 +126,13 @@ export function normalizeLotRow(row: LotInputRow): LotPayload {
   return payload;
 }
 
-export function normalizeRunOptions(options: Partial<RunOptions> = {}): RunOptions {
-  const throttleMs = Math.max(0, Math.min(Number(options.throttleMs ?? 150), 2000));
+export function normalizeRunOptions(
+  options: Partial<RunOptions> = {},
+): RunOptions {
+  const throttleMs = Math.max(
+    0,
+    Math.min(Number(options.throttleMs ?? 150), 2000),
+  );
 
   return {
     dryRun: Boolean(options.dryRun),
@@ -158,7 +163,9 @@ export function parseCsv(text: string): LotInputRow[] {
   }
 
   const rawHeaders = matrix[0].map((header) => header.trim());
-  const hasName = rawHeaders.some((header) => canonicalHeader(header) === "name");
+  const hasName = rawHeaders.some(
+    (header) => canonicalHeader(header) === "name",
+  );
   const hasSku = rawHeaders.some((header) => canonicalHeader(header) === "sku");
   if (!hasName || !hasSku) {
     throw new Error("CSV must include name and sku columns.");
@@ -196,7 +203,9 @@ export function toResultsCsv(results: LotResult[]): string {
   return toCsv([[...RESULT_HEADERS], ...rows]);
 }
 
-export function toCsv(rows: Array<Array<string | number | boolean | null | undefined>>): string {
+export function toCsv(
+  rows: Array<Array<string | number | boolean | null | undefined>>,
+): string {
   return rows
     .map((row) =>
       row

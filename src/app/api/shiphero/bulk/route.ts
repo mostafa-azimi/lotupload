@@ -15,7 +15,12 @@ import {
   type LocationUpdatePayload,
 } from "@/lib/bulk";
 import { cleanMessage } from "@/lib/lots";
-import { createTraceId, fingerprintSecret, logEvent, readTraceId } from "@/lib/logging";
+import {
+  createTraceId,
+  fingerprintSecret,
+  logEvent,
+  readTraceId,
+} from "@/lib/logging";
 import {
   createLot,
   findExistingLot,
@@ -23,6 +28,7 @@ import {
   resolveLocation,
   updateLocation,
   updateProductCaseBarcode,
+  type ProductCaseCache,
   type ShipHeroLocation,
 } from "@/lib/shiphero";
 
@@ -37,12 +43,16 @@ export async function POST(request: Request) {
       operationId?: BulkOperationId;
       refreshToken?: string;
       clientId?: string;
+      selectedCustomerAccountId?: string;
       rows?: BulkInputRow[];
       options?: Partial<BulkRunOptions>;
     };
     const operationId = normalizeOperationId(body.operationId);
     const rows = Array.isArray(body.rows) ? body.rows : [];
     const options = normalizeRunOptions(body.options);
+    const selectedCustomerAccountId = normalizeOptionalString(
+      body.selectedCustomerAccountId,
+    );
 
     logEvent("info", "shiphero.bulk.request.received", {
       traceId,
@@ -55,6 +65,7 @@ export async function POST(request: Request) {
       throttleMs: options.throttleMs,
       hasClientId: Boolean(body.clientId?.trim()),
       hasRefreshToken: Boolean(body.refreshToken?.trim()),
+      hasSelectedCustomerAccountId: Boolean(selectedCustomerAccountId),
       clientIdFingerprint: fingerprintSecret(body.clientId),
       refreshTokenFingerprint: fingerprintSecret(body.refreshToken),
     });
@@ -71,13 +82,17 @@ export async function POST(request: Request) {
         });
     const accessToken = refreshed?.accessToken ?? "";
     const results: BulkResult[] = [];
+    const productCaseCache: ProductCaseCache = new Map();
     let halted = false;
 
     for (const row of rows) {
       let normalized: BulkPayload | undefined;
 
       try {
-        normalized = normalizeBulkRow(operationId, row);
+        normalized = applySelectedCustomerAccount(
+          normalizeBulkRow(operationId, row),
+          selectedCustomerAccountId,
+        );
 
         logEvent("info", "shiphero.bulk.row.start", {
           traceId,
@@ -104,6 +119,7 @@ export async function POST(request: Request) {
             normalized,
             options,
             traceId,
+            productCaseCache,
           );
           results.push(result);
           logRowCompleted(traceId, result);
@@ -112,14 +128,18 @@ export async function POST(request: Request) {
         const status = isThrottleError(error) ? "THROTTLED" : "ERROR";
         const errorTraceId = readTraceId(error) || traceId;
 
-        logEvent(status === "THROTTLED" ? "warn" : "error", "shiphero.bulk.row.failed", {
-          traceId: errorTraceId,
-          operationId,
-          rowNumber: row?.rowNumber ?? "",
-          status,
-          shipheroRequestId: readRequestId(error),
-          error: cleanMessage(error),
-        });
+        logEvent(
+          status === "THROTTLED" ? "warn" : "error",
+          "shiphero.bulk.row.failed",
+          {
+            traceId: errorTraceId,
+            operationId,
+            rowNumber: row?.rowNumber ?? "",
+            status,
+            shipheroRequestId: readRequestId(error),
+            error: cleanMessage(error),
+          },
+        );
 
         results.push({
           ...baseResult(operationId, row, normalized),
@@ -146,12 +166,17 @@ export async function POST(request: Request) {
       rowCount: rows.length,
       resultCount: results.length,
       halted,
-      createdCount: results.filter((result) => result.status === "CREATED").length,
-      updatedCount: results.filter((result) => result.status === "UPDATED").length,
-      dryRunCount: results.filter((result) => result.status === "DRY_RUN").length,
-      skippedCount: results.filter((result) => result.status === "SKIPPED").length,
+      createdCount: results.filter((result) => result.status === "CREATED")
+        .length,
+      updatedCount: results.filter((result) => result.status === "UPDATED")
+        .length,
+      dryRunCount: results.filter((result) => result.status === "DRY_RUN")
+        .length,
+      skippedCount: results.filter((result) => result.status === "SKIPPED")
+        .length,
       errorCount: results.filter((result) => result.status === "ERROR").length,
-      throttledCount: results.filter((result) => result.status === "THROTTLED").length,
+      throttledCount: results.filter((result) => result.status === "THROTTLED")
+        .length,
       refreshTokenRotated: Boolean(refreshed?.rotatedRefreshToken),
     });
 
@@ -187,6 +212,7 @@ async function runLiveRow(
   normalized: BulkPayload,
   options: BulkRunOptions,
   traceId: string,
+  productCaseCache: ProductCaseCache,
 ): Promise<BulkResult> {
   if (normalized.operationId === "lots") {
     const payload = normalized.payload;
@@ -231,15 +257,26 @@ async function runLiveRow(
     normalized.operationId === "location-pickable" ||
     normalized.operationId === "location-sellable"
   ) {
-    return runLocationUpdate(accessToken, operationId, row, normalized.payload, traceId);
+    return runLocationUpdate(
+      accessToken,
+      operationId,
+      row,
+      normalized.payload,
+      traceId,
+    );
   }
 
   if (normalized.operationId === "product-case-barcodes") {
-    const response = await updateProductCaseBarcode(accessToken, normalized.payload, {
-      traceId,
-      operation: "bulk:update-product-case-barcode",
-      rowNumber: row.rowNumber,
-    });
+    const response = await updateProductCaseBarcode(
+      accessToken,
+      normalized.payload,
+      {
+        traceId,
+        operation: "bulk:update-product-case-barcode",
+        rowNumber: row.rowNumber,
+      },
+      productCaseCache,
+    );
     const status: BulkStatus = response.skipped ? "SKIPPED" : "UPDATED";
     const message = response.skipped
       ? "Case barcode already exists with this quantity."
@@ -280,9 +317,7 @@ async function runLocationUpdate(
   const base = {
     ...baseResult(operationId, row, {
       operationId: operationId as
-        | "location-pick-priority"
-        | "location-pickable"
-        | "location-sellable",
+        "location-pick-priority" | "location-pickable" | "location-sellable",
       payload,
     }),
     locationId: location.id,
@@ -300,11 +335,15 @@ async function runLocationUpdate(
     };
   }
 
-  const response = await updateLocation(accessToken, buildLocationUpdateData(location.id, payload), {
-    traceId,
-    operation: "bulk:update-location",
-    rowNumber: row.rowNumber,
-  });
+  const response = await updateLocation(
+    accessToken,
+    buildLocationUpdateData(location.id, payload),
+    {
+      traceId,
+      operation: "bulk:update-location",
+      rowNumber: row.rowNumber,
+    },
+  );
 
   return {
     ...base,
@@ -334,7 +373,10 @@ function buildLocationUpdateData(
   return { location_id: locationId, sellable: Boolean(payload.value) };
 }
 
-function isSameLocationValue(location: ShipHeroLocation, payload: LocationUpdatePayload): boolean {
+function isSameLocationValue(
+  location: ShipHeroLocation,
+  payload: LocationUpdatePayload,
+): boolean {
   if (payload.field === "pick_priority") {
     return Number(location.pick_priority) === Number(payload.value);
   }
@@ -358,6 +400,43 @@ function normalizeOperationId(operationId?: BulkOperationId): BulkOperationId {
   return "lots";
 }
 
+function applySelectedCustomerAccount(
+  normalized: BulkPayload,
+  selectedCustomerAccountId: string,
+): BulkPayload {
+  if (!selectedCustomerAccountId) {
+    return normalized;
+  }
+
+  if (normalized.operationId === "lots") {
+    return {
+      operationId: normalized.operationId,
+      payload: {
+        ...normalized.payload,
+        customer_account_id:
+          normalized.payload.customer_account_id || selectedCustomerAccountId,
+      },
+    };
+  }
+
+  if (normalized.operationId === "product-case-barcodes") {
+    return {
+      operationId: normalized.operationId,
+      payload: {
+        ...normalized.payload,
+        customer_account_id:
+          normalized.payload.customer_account_id || selectedCustomerAccountId,
+      },
+    };
+  }
+
+  return normalized;
+}
+
+function normalizeOptionalString(value: unknown): string {
+  return String(value ?? "").trim();
+}
+
 function normalizedIdentifier(normalized: BulkPayload): string {
   if (normalized.operationId === "lots") {
     return `${normalized.payload.sku} / ${normalized.payload.name}`;
@@ -365,7 +444,9 @@ function normalizedIdentifier(normalized: BulkPayload): string {
   if (normalized.operationId === "product-case-barcodes") {
     return `${normalized.payload.sku} / ${normalized.payload.case_barcode}`;
   }
-  return normalized.payload.location_id || normalized.payload.location_name || "";
+  return (
+    normalized.payload.location_id || normalized.payload.location_name || ""
+  );
 }
 
 function logRowCompleted(traceId: string, result: BulkResult) {
@@ -386,9 +467,9 @@ function logRowCompleted(traceId: string, result: BulkResult) {
 function isThrottleError(error: unknown): boolean {
   return Boolean(
     error &&
-      typeof error === "object" &&
-      "isThrottle" in error &&
-      (error as { isThrottle?: boolean }).isThrottle,
+    typeof error === "object" &&
+    "isThrottle" in error &&
+    (error as { isThrottle?: boolean }).isThrottle,
   );
 }
 

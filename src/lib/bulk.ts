@@ -14,12 +14,7 @@ export type BulkOperationId =
   | "product-case-barcodes";
 
 export type BulkStatus =
-  | "DRY_RUN"
-  | "CREATED"
-  | "UPDATED"
-  | "SKIPPED"
-  | "ERROR"
-  | "THROTTLED";
+  "DRY_RUN" | "CREATED" | "UPDATED" | "SKIPPED" | "ERROR" | "THROTTLED";
 
 export type BulkInputRow = {
   rowNumber: number;
@@ -67,12 +62,13 @@ export type BulkPayload =
   | { operationId: "lots"; payload: LotPayload }
   | {
       operationId:
-        | "location-pick-priority"
-        | "location-pickable"
-        | "location-sellable";
+        "location-pick-priority" | "location-pickable" | "location-sellable";
       payload: LocationUpdatePayload;
     }
-  | { operationId: "product-case-barcodes"; payload: ProductCaseBarcodePayload };
+  | {
+      operationId: "product-case-barcodes";
+      payload: ProductCaseBarcodePayload;
+    };
 
 type BulkOperationConfig = {
   id: BulkOperationId;
@@ -101,7 +97,12 @@ export const BULK_OPERATIONS: BulkOperationConfig[] = [
     templateFileName: "shiphero-lots-template.csv",
     resultsFileName: "shiphero-lots-results.csv",
     requiredColumns: ["sku", "name"],
-    optionalColumns: ["expires_at", "is_active", "customer_account_id", "notes"],
+    optionalColumns: [
+      "expires_at",
+      "is_active",
+      "customer_account_id",
+      "notes",
+    ],
     sampleRows: [
       [
         "SKU-12345",
@@ -109,7 +110,7 @@ export const BULK_OPERATIONS: BulkOperationConfig[] = [
         "2026-12-31",
         "true",
         "",
-        "customer_account_id is usually blank when using a child-account refresh token",
+        "Leave blank when using a saved 3PL child profile",
       ],
     ],
     dryRunLabel: "Check lot CSV",
@@ -127,7 +128,15 @@ export const BULK_OPERATIONS: BulkOperationConfig[] = [
     resultsFileName: "shiphero-location-pick-priority-results.csv",
     requiredColumns: ["location_id or location_name", "pick_priority"],
     optionalColumns: ["warehouse_id", "notes"],
-    sampleRows: [["", "A-01-01", "V2FyZWhvdXNlOjEyMzQ=", "10", "Use location_id when available"]],
+    sampleRows: [
+      [
+        "",
+        "A-01-01",
+        "V2FyZWhvdXNlOjEyMzQ=",
+        "10",
+        "Use location_id when available",
+      ],
+    ],
     dryRunLabel: "Check priority CSV",
     liveRunLabel: "Update priority",
     successLabel: "Updated",
@@ -143,7 +152,15 @@ export const BULK_OPERATIONS: BulkOperationConfig[] = [
     resultsFileName: "shiphero-location-pickable-results.csv",
     requiredColumns: ["location_id or location_name", "pickable"],
     optionalColumns: ["warehouse_id", "notes"],
-    sampleRows: [["", "A-01-01", "V2FyZWhvdXNlOjEyMzQ=", "true", "true/false, yes/no, or 1/0"]],
+    sampleRows: [
+      [
+        "",
+        "A-01-01",
+        "V2FyZWhvdXNlOjEyMzQ=",
+        "true",
+        "true/false, yes/no, or 1/0",
+      ],
+    ],
     dryRunLabel: "Check pickable CSV",
     liveRunLabel: "Update pickable",
     successLabel: "Updated",
@@ -159,7 +176,15 @@ export const BULK_OPERATIONS: BulkOperationConfig[] = [
     resultsFileName: "shiphero-location-sellable-results.csv",
     requiredColumns: ["location_id or location_name", "sellable"],
     optionalColumns: ["warehouse_id", "notes"],
-    sampleRows: [["", "A-01-01", "V2FyZWhvdXNlOjEyMzQ=", "false", "true/false, yes/no, or 1/0"]],
+    sampleRows: [
+      [
+        "",
+        "A-01-01",
+        "V2FyZWhvdXNlOjEyMzQ=",
+        "false",
+        "true/false, yes/no, or 1/0",
+      ],
+    ],
     dryRunLabel: "Check sellable CSV",
     liveRunLabel: "Update sellable",
     successLabel: "Updated",
@@ -199,7 +224,14 @@ export const RESULT_HEADERS = [
 ] as const;
 
 const HEADERS: Record<BulkOperationId, string[]> = {
-  lots: ["sku", "name", "expires_at", "is_active", "customer_account_id", "notes"],
+  lots: [
+    "sku",
+    "name",
+    "expires_at",
+    "is_active",
+    "customer_account_id",
+    "notes",
+  ],
   "location-pick-priority": [
     "location_id",
     "location_name",
@@ -207,8 +239,20 @@ const HEADERS: Record<BulkOperationId, string[]> = {
     "pick_priority",
     "notes",
   ],
-  "location-pickable": ["location_id", "location_name", "warehouse_id", "pickable", "notes"],
-  "location-sellable": ["location_id", "location_name", "warehouse_id", "sellable", "notes"],
+  "location-pickable": [
+    "location_id",
+    "location_name",
+    "warehouse_id",
+    "pickable",
+    "notes",
+  ],
+  "location-sellable": [
+    "location_id",
+    "location_name",
+    "warehouse_id",
+    "sellable",
+    "notes",
+  ],
   "product-case-barcodes": [
     "sku",
     "case_barcode",
@@ -238,21 +282,48 @@ const HEADER_ALIASES: Record<string, string[]> = {
     "child_account_id",
   ],
   location_id: ["location_id", "bin_id", "bin_location_id", "id"],
-  location_name: ["location_name", "location", "bin", "bin_name", "bin_location", "name"],
+  location_name: [
+    "location_name",
+    "location",
+    "bin",
+    "bin_name",
+    "bin_location",
+    "name",
+  ],
   warehouse_id: ["warehouse_id", "warehouse", "warehouse_uuid"],
   pick_priority: ["pick_priority", "priority", "pick_sequence", "sequence"],
   pickable: ["pickable", "is_pickable"],
   sellable: ["sellable", "is_sellable"],
-  case_barcode: ["case_barcode", "case_barcode_value", "case_upc", "case_gtin", "barcode"],
-  case_quantity: ["case_quantity", "case_qty", "quantity", "qty", "units_per_case"],
+  case_barcode: [
+    "case_barcode",
+    "case_barcode_value",
+    "case_upc",
+    "case_gtin",
+    "barcode",
+  ],
+  case_quantity: [
+    "case_quantity",
+    "case_qty",
+    "quantity",
+    "qty",
+    "units_per_case",
+  ],
   notes: ["notes", "note", "memo"],
 };
 
-export function getOperationConfig(operationId: BulkOperationId): BulkOperationConfig {
-  return BULK_OPERATIONS.find((operation) => operation.id === operationId) ?? BULK_OPERATIONS[0];
+export function getOperationConfig(
+  operationId: BulkOperationId,
+): BulkOperationConfig {
+  return (
+    BULK_OPERATIONS.find((operation) => operation.id === operationId) ??
+    BULK_OPERATIONS[0]
+  );
 }
 
-export function parseBulkCsv(text: string, operationId: BulkOperationId): BulkInputRow[] {
+export function parseBulkCsv(
+  text: string,
+  operationId: BulkOperationId,
+): BulkInputRow[] {
   const matrix = parseDelimited(text);
   if (!matrix.length) {
     throw new Error("CSV is empty.");
@@ -277,7 +348,10 @@ export function parseBulkCsv(text: string, operationId: BulkOperationId): BulkIn
     .filter((row) => Object.values(row.data).some((value) => cleanCell(value)));
 }
 
-export function normalizeBulkRow(operationId: BulkOperationId, row: BulkInputRow): BulkPayload {
+export function normalizeBulkRow(
+  operationId: BulkOperationId,
+  row: BulkInputRow,
+): BulkPayload {
   if (operationId === "lots") {
     return { operationId, payload: normalizeLotRow(row) };
   }
@@ -287,14 +361,22 @@ export function normalizeBulkRow(operationId: BulkOperationId, row: BulkInputRow
     operationId === "location-pickable" ||
     operationId === "location-sellable"
   ) {
-    return { operationId, payload: normalizeLocationUpdateRow(operationId, row) };
+    return {
+      operationId,
+      payload: normalizeLocationUpdateRow(operationId, row),
+    };
   }
 
   return { operationId, payload: normalizeProductCaseBarcodeRow(row) };
 }
 
-export function normalizeRunOptions(options: Partial<BulkRunOptions> = {}): BulkRunOptions {
-  const throttleMs = Math.max(0, Math.min(Number(options.throttleMs ?? 150), 2000));
+export function normalizeRunOptions(
+  options: Partial<BulkRunOptions> = {},
+): BulkRunOptions {
+  const throttleMs = Math.max(
+    0,
+    Math.min(Number(options.throttleMs ?? 150), 2000),
+  );
 
   return {
     dryRun: Boolean(options.dryRun),
@@ -340,7 +422,15 @@ export function countResults(results: BulkResult[]) {
       if (result.status === "THROTTLED") acc.throttled += 1;
       return acc;
     },
-    { total: 0, created: 0, updated: 0, validated: 0, skipped: 0, errors: 0, throttled: 0 },
+    {
+      total: 0,
+      created: 0,
+      updated: 0,
+      validated: 0,
+      skipped: 0,
+      errors: 0,
+      throttled: 0,
+    },
   );
 }
 
@@ -351,7 +441,9 @@ export function bulkPayloadIdentifier(payload: BulkPayload): string {
   if (payload.operationId === "product-case-barcodes") {
     return `${payload.payload.sku} / ${payload.payload.case_barcode}`;
   }
-  return payload.payload.location_id || payload.payload.location_name || "location";
+  return (
+    payload.payload.location_id || payload.payload.location_name || "location"
+  );
 }
 
 export function requestedValue(payload: BulkPayload): string {
@@ -370,7 +462,13 @@ export function baseResult(
   payload?: BulkPayload,
 ): Pick<
   BulkResult,
-  "rowNumber" | "operationId" | "identifier" | "sku" | "locationId" | "locationName" | "requestedValue"
+  | "rowNumber"
+  | "operationId"
+  | "identifier"
+  | "sku"
+  | "locationId"
+  | "locationName"
+  | "requestedValue"
 > {
   const result = {
     rowNumber: row.rowNumber,
@@ -412,7 +510,10 @@ export function successNextStep(status: BulkStatus): string {
   return "No action needed.";
 }
 
-export function suggestFix(error: unknown, operationId: BulkOperationId): string {
+export function suggestFix(
+  error: unknown,
+  operationId: BulkOperationId,
+): string {
   const message = cleanMessage(error);
   const lower = message.toLowerCase();
 
@@ -437,13 +538,21 @@ export function suggestFix(error: unknown, operationId: BulkOperationId): string
   if (lower.includes("multiple") || lower.includes("ambiguous")) {
     return "Use the exact ShipHero ID instead of a name so the row points to one record.";
   }
-  if (lower.includes("401") || lower.includes("unauthorized") || lower.includes("access token")) {
+  if (
+    lower.includes("401") ||
+    lower.includes("unauthorized") ||
+    lower.includes("access token")
+  ) {
     return "Reconnect with a valid refresh token and the matching OAuth client ID.";
   }
   if (lower.includes("403") || lower.includes("permission")) {
     return "Confirm the token belongs to the right account and has permission for this object.";
   }
-  if (lower.includes("thrott") || lower.includes("rate limit") || lower.includes("wait")) {
+  if (
+    lower.includes("thrott") ||
+    lower.includes("rate limit") ||
+    lower.includes("wait")
+  ) {
     return "Wait the time shown by ShipHero, then rerun the failed rows with a higher delay.";
   }
   if (lower.includes("timed out")) {
@@ -453,7 +562,10 @@ export function suggestFix(error: unknown, operationId: BulkOperationId): string
   return "Review the message, fix the CSV row or account access, then rerun only failed rows.";
 }
 
-function assertRequiredHeaders(operationId: BulkOperationId, rawHeaders: string[]) {
+function assertRequiredHeaders(
+  operationId: BulkOperationId,
+  rawHeaders: string[],
+) {
   const canonicalHeaders = rawHeaders.map(canonicalHeader).filter(Boolean);
 
   if (operationId === "lots") {
@@ -461,12 +573,18 @@ function assertRequiredHeaders(operationId: BulkOperationId, rawHeaders: string[
     return;
   }
   if (operationId === "product-case-barcodes") {
-    requireHeaders(operationId, canonicalHeaders, ["sku", "case_barcode", "case_quantity"]);
+    requireHeaders(operationId, canonicalHeaders, [
+      "sku",
+      "case_barcode",
+      "case_quantity",
+    ]);
     return;
   }
 
   const config = getOperationConfig(operationId);
-  const hasLocation = canonicalHeaders.includes("location_id") || canonicalHeaders.includes("location_name");
+  const hasLocation =
+    canonicalHeaders.includes("location_id") ||
+    canonicalHeaders.includes("location_name");
   const valueHeader =
     operationId === "location-pick-priority"
       ? "pick_priority"
@@ -484,7 +602,9 @@ function requireHeaders(
   canonicalHeaders: string[],
   requiredHeaders: string[],
 ) {
-  const missing = requiredHeaders.filter((header) => !canonicalHeaders.includes(header));
+  const missing = requiredHeaders.filter(
+    (header) => !canonicalHeaders.includes(header),
+  );
   if (missing.length) {
     throw new Error(
       `CSV must include ${getOperationConfig(operationId).requiredColumns.join(", ")}.`,
@@ -494,9 +614,7 @@ function requireHeaders(
 
 function normalizeLocationUpdateRow(
   operationId:
-    | "location-pick-priority"
-    | "location-pickable"
-    | "location-sellable",
+    "location-pick-priority" | "location-pickable" | "location-sellable",
   row: BulkInputRow,
 ): LocationUpdatePayload {
   const mapped = mappedRow(row);
@@ -514,7 +632,9 @@ function normalizeLocationUpdateRow(
       location_name: locationName || undefined,
       warehouse_id: warehouseId || undefined,
       field: "pick_priority",
-      value: parseInteger(cleanCell(mapped.pick_priority), "pick_priority", { min: 0 }),
+      value: parseInteger(cleanCell(mapped.pick_priority), "pick_priority", {
+        min: 0,
+      }),
     };
   }
 
@@ -537,11 +657,17 @@ function normalizeLocationUpdateRow(
   };
 }
 
-function normalizeProductCaseBarcodeRow(row: BulkInputRow): ProductCaseBarcodePayload {
+function normalizeProductCaseBarcodeRow(
+  row: BulkInputRow,
+): ProductCaseBarcodePayload {
   const mapped = mappedRow(row);
   const sku = cleanCell(mapped.sku);
   const caseBarcode = cleanCell(mapped.case_barcode);
-  const caseQuantity = parseInteger(cleanCell(mapped.case_quantity), "case_quantity", { min: 1 });
+  const caseQuantity = parseInteger(
+    cleanCell(mapped.case_quantity),
+    "case_quantity",
+    { min: 1 },
+  );
   const customerAccountId = cleanCell(mapped.customer_account_id);
 
   if (!sku) {
@@ -578,38 +704,67 @@ function canonicalHeader(header: string): string {
     .replace(/^_+|_+$/g, "");
 
   return (
-    Object.entries(HEADER_ALIASES).find(([, aliases]) => aliases.includes(normalized))?.[0] ??
-    ""
+    Object.entries(HEADER_ALIASES).find(([, aliases]) =>
+      aliases.includes(normalized),
+    )?.[0] ?? ""
   );
 }
 
 function parseBoolean(value: string, label: string): boolean {
   const text = cleanCell(value).toLowerCase();
-  if (["true", "yes", "y", "1", "active", "enabled", "pickable", "sellable"].includes(text)) {
+  if (
+    [
+      "true",
+      "yes",
+      "y",
+      "1",
+      "active",
+      "enabled",
+      "pickable",
+      "sellable",
+    ].includes(text)
+  ) {
     return true;
   }
   if (
-    ["false", "no", "n", "0", "inactive", "disabled", "non_pickable", "non_sellable"].includes(
-      text,
-    )
+    [
+      "false",
+      "no",
+      "n",
+      "0",
+      "inactive",
+      "disabled",
+      "non_pickable",
+      "non_sellable",
+    ].includes(text)
   ) {
     return false;
   }
   throw new Error(`Invalid ${label} value: ${value}. Expected true/false.`);
 }
 
-function parseInteger(value: string, label: string, options: { min?: number } = {}): number {
+function parseInteger(
+  value: string,
+  label: string,
+  options: { min?: number } = {},
+): number {
   const text = cleanCell(value);
   if (!/^-?\d+$/.test(text)) {
-    throw new Error(`Invalid ${label} value: ${value}. Expected a whole number.`);
+    throw new Error(
+      `Invalid ${label} value: ${value}. Expected a whole number.`,
+    );
   }
 
   const parsed = Number(text);
   if (!Number.isSafeInteger(parsed)) {
-    throw new Error(`Invalid ${label} value: ${value}. Expected a safe whole number.`);
+    throw new Error(
+      `Invalid ${label} value: ${value}. Expected a safe whole number.`,
+    );
   }
   if (options.min !== undefined && parsed < options.min) {
-    throw new Error(`Invalid ${label} value: ${value}. Must be at least ${options.min}.`);
+    throw new Error(
+      `Invalid ${label} value: ${value}. Must be at least ${options.min}.`,
+    );
   }
   return parsed;
 }

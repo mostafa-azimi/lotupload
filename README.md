@@ -17,9 +17,31 @@ The app uses refresh-token login only. Operators enter:
 - ShipHero OAuth client ID
 - ShipHero refresh token
 
-The server refreshes the token through ShipHero, verifies the account with `me`, and uses the short-lived access token only inside server routes. Pasted access-token login is not part of the app.
+The server refreshes the token through ShipHero, verifies the account with `me` and `account`, and uses the short-lived access token only inside server routes. Pasted access-token login is not part of the app.
 
 Refresh tokens must be refreshed with the same OAuth client ID that created them. ShipHero can rotate refresh tokens during a refresh; when that happens, the app updates the current browser session.
+
+## Brand And 3PL Profiles
+
+Saved profiles live in the browser's local storage. The app does not store refresh tokens server-side.
+
+Brand accounts:
+
+1. Paste the client ID and refresh token.
+2. Click Connect.
+3. Confirm the connected brand account.
+4. The profile is saved in this browser.
+
+3PL accounts:
+
+1. Paste the 3PL client ID and refresh token.
+2. Click Connect.
+3. Choose the ShipHero child account from the dropdown, or paste the child account ID manually.
+4. Enter a friendly child account name.
+5. Click Save profile.
+6. Next time, choose that child profile from Saved connection.
+
+Lots and product case barcode updates use the selected child account by sending `customer_account_id` when the CSV row does not already include one. Location tools ignore the child account profile because ShipHero's `UpdateLocationInput` does not include `customer_account_id`; those updates stay scoped to the connected 3PL/location account.
 
 ## CSV Templates
 

@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server";
 import { cleanMessage } from "@/lib/lots";
-import { createTraceId, fingerprintSecret, logEvent, readTraceId } from "@/lib/logging";
+import {
+  createTraceId,
+  fingerprintSecret,
+  logEvent,
+  readTraceId,
+} from "@/lib/logging";
 import { verifyRefreshToken } from "@/lib/shiphero";
 
 export const runtime = "nodejs";
@@ -24,16 +29,23 @@ export async function POST(request: Request) {
       refreshTokenFingerprint: fingerprintSecret(body.refreshToken),
     });
 
-    const result = await verifyRefreshToken(body.refreshToken ?? "", body.clientId, {
-      traceId,
-      operation: "verify-refresh-token",
-    });
+    const result = await verifyRefreshToken(
+      body.refreshToken ?? "",
+      body.clientId,
+      {
+        traceId,
+        operation: "verify-refresh-token",
+      },
+    );
 
     logEvent("info", "shiphero.verify.request.succeeded", {
       traceId,
       authMode: "refresh",
       accountId: result.account.accountId,
       userId: result.account.userId,
+      is3pl: result.account.is3pl,
+      customerCount: result.account.customers.length,
+      customerPageLimitReached: result.account.customerPageLimitReached,
       shipheroRequestId: result.account.requestId,
       refreshTokenRotated: Boolean(result.rotatedRefreshToken),
     });
