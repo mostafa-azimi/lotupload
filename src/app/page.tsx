@@ -92,6 +92,7 @@ export default function Home() {
   const [profileLabel, setProfileLabel] = useState("");
   const [childAccountId, setChildAccountId] = useState("");
   const [childAccountName, setChildAccountName] = useState("");
+  const [showConnectionScreen, setShowConnectionScreen] = useState(true);
   const [rows, setRows] = useState<BulkInputRow[]>([]);
   const [csvText, setCsvText] = useState("");
   const [fileName, setFileName] = useState("");
@@ -142,6 +143,7 @@ export default function Home() {
   const selectedCustomerAccountId = needsChildAccount
     ? childAccountId.trim() || selectedChildAccount?.id || ""
     : "";
+  const canContinueToTools = Boolean(account);
   const liveRunBlocked =
     !dryRun && (!account || (needsChildAccount && !selectedCustomerAccountId));
   const progressPercent = rows.length
@@ -359,6 +361,25 @@ export default function Home() {
           : connection,
       ),
     );
+  }
+
+  function continueToTools() {
+    if (!account) {
+      setState("error");
+      setStatusText("Connect or choose a saved ShipHero account first.");
+      return;
+    }
+
+    setShowConnectionScreen(false);
+    setState("idle");
+    setStatusText(`${operation.title} selected.`);
+    addLog(`Using account scope: ${activeScopeText}.`);
+  }
+
+  function switchConnection() {
+    setShowConnectionScreen(true);
+    setState("idle");
+    setStatusText("Choose or connect a ShipHero account.");
   }
 
   async function connectAccount() {
@@ -597,6 +618,7 @@ export default function Home() {
     setProfileLabel("");
     setChildAccountId("");
     setChildAccountName("");
+    setShowConnectionScreen(true);
     setState("idle");
     setStatusText("Login cleared.");
     addLog("Login cleared from this browser session.");
@@ -624,6 +646,280 @@ export default function Home() {
     );
   }
 
+  const connectionPanel = (
+    <Panel
+      title="Connection"
+      icon={<KeyRound className="size-4" aria-hidden />}
+    >
+      <label className="field-label" htmlFor="saved-connection">
+        Saved connection
+      </label>
+      <select
+        id="saved-connection"
+        className="field-input mb-3"
+        value={selectedConnectionId}
+        onChange={(event) => selectSavedConnection(event.target.value)}
+      >
+        <option value="">New connection</option>
+        {savedConnections.map((connection) => (
+          <option key={connection.id} value={connection.id}>
+            {connection.label}{" "}
+            {connection.mode === "3pl" ? "(3PL child)" : "(Brand)"}
+          </option>
+        ))}
+      </select>
+
+      <label className="field-label" htmlFor="profile-label">
+        Profile name
+      </label>
+      <input
+        id="profile-label"
+        className="field-input mb-3"
+        placeholder="Example: Acme child account"
+        value={profileLabel}
+        onChange={(event) => setProfileLabel(event.target.value)}
+        autoComplete="off"
+      />
+
+      <label className="field-label" htmlFor="client-id">
+        ShipHero OAuth client ID
+      </label>
+      <input
+        id="client-id"
+        className="field-input mb-3 font-mono"
+        placeholder="Paste matching OAuth client ID"
+        value={clientId}
+        onChange={(event) => updateClientId(event.target.value)}
+        autoComplete="off"
+        spellCheck={false}
+      />
+      <label className="field-label" htmlFor="refresh-token">
+        ShipHero refresh token
+      </label>
+      <textarea
+        id="refresh-token"
+        className="field-textarea min-h-28 font-mono"
+        placeholder="Paste refresh token"
+        value={refreshToken}
+        onChange={(event) => updateRefreshToken(event.target.value)}
+        spellCheck={false}
+      />
+
+      {account?.is3pl ? (
+        <div className="mt-3 rounded-md border border-zinc-200 bg-zinc-50 p-3 dark:border-zinc-800 dark:bg-zinc-950">
+          <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+            <UsersRound
+              className="size-4 text-teal-700 dark:text-teal-300"
+              aria-hidden
+            />
+            3PL child account
+          </div>
+          {account.customers.length ? (
+            <>
+              <label className="field-label" htmlFor="child-account-select">
+                ShipHero child account
+              </label>
+              <select
+                id="child-account-select"
+                className="field-input mb-3"
+                value={childAccountId}
+                onChange={(event) => chooseChildAccount(event.target.value)}
+              >
+                <option value="">Choose child account</option>
+                {account.customers.map((customer) => (
+                  <option key={customer.id} value={customer.id}>
+                    {customer.displayName}
+                  </option>
+                ))}
+              </select>
+            </>
+          ) : (
+            <div className="mb-3 rounded-md border border-amber-200 bg-amber-50 p-2 text-sm text-amber-950 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-100">
+              ShipHero did not return child accounts. Enter the child account ID
+              manually.
+            </div>
+          )}
+          <label className="field-label" htmlFor="child-account-name">
+            Child account name
+          </label>
+          <input
+            id="child-account-name"
+            className="field-input mb-3"
+            placeholder="Friendly name for the dropdown"
+            value={childAccountName}
+            onChange={(event) => setChildAccountName(event.target.value)}
+            autoComplete="off"
+          />
+          <label className="field-label" htmlFor="child-account-id">
+            Child account ID
+          </label>
+          <input
+            id="child-account-id"
+            className="field-input font-mono"
+            placeholder="Required for lots and case barcode updates"
+            value={childAccountId}
+            onChange={(event) => setChildAccountId(event.target.value)}
+            autoComplete="off"
+            spellCheck={false}
+          />
+          {account.customerPageLimitReached ? (
+            <div className="mt-2 text-xs text-amber-700 dark:text-amber-200">
+              Customer list was capped. Use the manual child account ID field if
+              the account is missing.
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
+      <div className="mt-3 flex flex-wrap gap-2">
+        <button
+          className="btn-secondary"
+          type="button"
+          onClick={connectAccount}
+          disabled={state === "checking" || !authReady}
+        >
+          {state === "checking" ? (
+            <Loader2 className="size-4 animate-spin" aria-hidden />
+          ) : (
+            <ShieldCheck className="size-4" aria-hidden />
+          )}
+          Connect
+        </button>
+        <button
+          className="btn-secondary"
+          type="button"
+          onClick={() => saveCurrentConnection()}
+          disabled={!account || (account.is3pl && !childAccountId.trim())}
+        >
+          <Save className="size-4" aria-hidden />
+          Save profile
+        </button>
+        <button
+          className="btn-ghost"
+          type="button"
+          onClick={clearLogin}
+          disabled={!authReady && !account}
+        >
+          <Trash2 className="size-4" aria-hidden />
+          Clear
+        </button>
+        <button
+          className="btn-ghost"
+          type="button"
+          onClick={forgetSavedConnection}
+          disabled={!selectedConnectionId}
+        >
+          <Trash2 className="size-4" aria-hidden />
+          Forget
+        </button>
+      </div>
+
+      <div className="mt-4 flex items-start gap-2 rounded-md border border-zinc-200 bg-zinc-50 p-3 text-sm text-zinc-800 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-100">
+        <UsersRound
+          className="mt-0.5 size-4 shrink-0 text-teal-700 dark:text-teal-300"
+          aria-hidden
+        />
+        <span>{activeScopeText}</span>
+      </div>
+
+      {account ? (
+        <div className="mt-4 rounded-md border border-teal-200 bg-teal-50 p-3 text-sm text-teal-950 dark:border-teal-800 dark:bg-teal-950/40 dark:text-teal-50">
+          <div className="flex items-center gap-2 font-semibold">
+            <CheckCircle2 className="size-4" aria-hidden />
+            Connected account
+          </div>
+          <dl className="mt-3 grid gap-2">
+            <AccountLine label="Mode" value={account.is3pl ? "3PL" : "Brand"} />
+            <AccountLine
+              label="Email"
+              value={account.email || "Not returned"}
+            />
+            <AccountLine
+              label="Username"
+              value={account.username || "Not returned"}
+            />
+            <AccountLine
+              label="User ID"
+              value={account.userId || "Not returned"}
+            />
+            <AccountLine
+              label="Account ID"
+              value={account.accountId || "Not returned"}
+            />
+            <AccountLine
+              label="Customers"
+              value={
+                account.is3pl
+                  ? String(account.customers.length)
+                  : "Not a 3PL account"
+              }
+            />
+            <AccountLine
+              label="Request ID"
+              value={account.requestId || "Not returned"}
+            />
+          </dl>
+        </div>
+      ) : (
+        <div className="mt-4 flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-100">
+          <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden />
+          <span>
+            Live mode stays locked until the refresh token is connected.
+          </span>
+        </div>
+      )}
+
+      <div className="mt-4 flex flex-wrap justify-end gap-2">
+        <button
+          className="btn-primary"
+          type="button"
+          onClick={continueToTools}
+          disabled={!canContinueToTools}
+        >
+          <CheckCircle2 className="size-4" aria-hidden />
+          Continue to tools
+        </button>
+      </div>
+    </Panel>
+  );
+
+  if (showConnectionScreen) {
+    return (
+      <main
+        className={`${theme === "dark" ? "dark " : ""}min-h-screen bg-stone-50 text-zinc-950 dark:bg-zinc-950 dark:text-zinc-50`}
+      >
+        <section className="border-b border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
+          <div className="mx-auto flex w-full max-w-4xl items-end justify-between gap-4 px-4 py-5 sm:px-6 lg:px-8">
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-teal-700 dark:text-teal-300">
+                ShipHero bulk updater
+              </p>
+              <h1 className="mt-1 text-2xl font-semibold text-zinc-950 sm:text-3xl dark:text-zinc-50">
+                Connect ShipHero
+              </h1>
+            </div>
+            <button
+              className="btn-secondary"
+              type="button"
+              onClick={() => changeTheme(theme === "dark" ? "light" : "dark")}
+            >
+              {theme === "dark" ? (
+                <Sun className="size-4" aria-hidden />
+              ) : (
+                <Moon className="size-4" aria-hidden />
+              )}
+              {theme === "dark" ? "Light" : "Dark"}
+            </button>
+          </div>
+        </section>
+
+        <section className="mx-auto w-full max-w-4xl px-4 py-5 sm:px-6 lg:px-8">
+          {connectionPanel}
+        </section>
+      </main>
+    );
+  }
+
   return (
     <main
       className={`${theme === "dark" ? "dark " : ""}min-h-screen bg-stone-50 text-zinc-950 dark:bg-zinc-950 dark:text-zinc-50`}
@@ -643,6 +939,21 @@ export default function Home() {
               </p>
             </div>
             <div className="flex flex-wrap gap-2">
+              <div className="flex max-w-full items-center gap-2 rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-800 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-100">
+                <UsersRound
+                  className="size-4 shrink-0 text-teal-700 dark:text-teal-300"
+                  aria-hidden
+                />
+                <span className="max-w-72 truncate">{activeScopeText}</span>
+              </div>
+              <button
+                className="btn-secondary"
+                type="button"
+                onClick={switchConnection}
+              >
+                <KeyRound className="size-4" aria-hidden />
+                Switch account
+              </button>
               <button
                 className="btn-secondary"
                 type="button"
@@ -716,237 +1027,6 @@ export default function Home() {
 
       <section className="mx-auto grid w-full max-w-7xl gap-4 px-4 py-5 sm:px-6 lg:grid-cols-[380px_1fr] lg:px-8">
         <div className="flex min-w-0 flex-col gap-4">
-          <Panel
-            title="Login"
-            icon={<KeyRound className="size-4" aria-hidden />}
-          >
-            <label className="field-label" htmlFor="saved-connection">
-              Saved connection
-            </label>
-            <select
-              id="saved-connection"
-              className="field-input mb-3"
-              value={selectedConnectionId}
-              onChange={(event) => selectSavedConnection(event.target.value)}
-            >
-              <option value="">New connection</option>
-              {savedConnections.map((connection) => (
-                <option key={connection.id} value={connection.id}>
-                  {connection.label}{" "}
-                  {connection.mode === "3pl" ? "(3PL child)" : "(Brand)"}
-                </option>
-              ))}
-            </select>
-
-            <label className="field-label" htmlFor="profile-label">
-              Profile name
-            </label>
-            <input
-              id="profile-label"
-              className="field-input mb-3"
-              placeholder="Example: Acme child account"
-              value={profileLabel}
-              onChange={(event) => setProfileLabel(event.target.value)}
-              autoComplete="off"
-            />
-
-            <label className="field-label" htmlFor="client-id">
-              ShipHero OAuth client ID
-            </label>
-            <input
-              id="client-id"
-              className="field-input mb-3 font-mono"
-              placeholder="Paste matching OAuth client ID"
-              value={clientId}
-              onChange={(event) => updateClientId(event.target.value)}
-              autoComplete="off"
-              spellCheck={false}
-            />
-            <label className="field-label" htmlFor="refresh-token">
-              ShipHero refresh token
-            </label>
-            <textarea
-              id="refresh-token"
-              className="field-textarea min-h-28 font-mono"
-              placeholder="Paste refresh token"
-              value={refreshToken}
-              onChange={(event) => updateRefreshToken(event.target.value)}
-              spellCheck={false}
-            />
-
-            {account?.is3pl ? (
-              <div className="mt-3 rounded-md border border-zinc-200 bg-zinc-50 p-3 dark:border-zinc-800 dark:bg-zinc-950">
-                <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-                  <UsersRound
-                    className="size-4 text-teal-700 dark:text-teal-300"
-                    aria-hidden
-                  />
-                  3PL child account
-                </div>
-                {account.customers.length ? (
-                  <>
-                    <label
-                      className="field-label"
-                      htmlFor="child-account-select"
-                    >
-                      ShipHero child account
-                    </label>
-                    <select
-                      id="child-account-select"
-                      className="field-input mb-3"
-                      value={childAccountId}
-                      onChange={(event) =>
-                        chooseChildAccount(event.target.value)
-                      }
-                    >
-                      <option value="">Choose child account</option>
-                      {account.customers.map((customer) => (
-                        <option key={customer.id} value={customer.id}>
-                          {customer.displayName}
-                        </option>
-                      ))}
-                    </select>
-                  </>
-                ) : (
-                  <div className="mb-3 rounded-md border border-amber-200 bg-amber-50 p-2 text-sm text-amber-950 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-100">
-                    ShipHero did not return child accounts. Enter the child
-                    account ID manually.
-                  </div>
-                )}
-                <label className="field-label" htmlFor="child-account-name">
-                  Child account name
-                </label>
-                <input
-                  id="child-account-name"
-                  className="field-input mb-3"
-                  placeholder="Friendly name for the dropdown"
-                  value={childAccountName}
-                  onChange={(event) => setChildAccountName(event.target.value)}
-                  autoComplete="off"
-                />
-                <label className="field-label" htmlFor="child-account-id">
-                  Child account ID
-                </label>
-                <input
-                  id="child-account-id"
-                  className="field-input font-mono"
-                  placeholder="Required for lots and case barcode updates"
-                  value={childAccountId}
-                  onChange={(event) => setChildAccountId(event.target.value)}
-                  autoComplete="off"
-                  spellCheck={false}
-                />
-                {account.customerPageLimitReached ? (
-                  <div className="mt-2 text-xs text-amber-700 dark:text-amber-200">
-                    Customer list was capped. Use the manual child account ID
-                    field if the account is missing.
-                  </div>
-                ) : null}
-              </div>
-            ) : null}
-
-            <div className="mt-3 flex flex-wrap gap-2">
-              <button
-                className="btn-secondary"
-                type="button"
-                onClick={connectAccount}
-                disabled={state === "checking" || !authReady}
-              >
-                {state === "checking" ? (
-                  <Loader2 className="size-4 animate-spin" aria-hidden />
-                ) : (
-                  <ShieldCheck className="size-4" aria-hidden />
-                )}
-                Connect
-              </button>
-              <button
-                className="btn-secondary"
-                type="button"
-                onClick={() => saveCurrentConnection()}
-                disabled={!account || (account.is3pl && !childAccountId.trim())}
-              >
-                <Save className="size-4" aria-hidden />
-                Save profile
-              </button>
-              <button
-                className="btn-ghost"
-                type="button"
-                onClick={clearLogin}
-                disabled={!authReady && !account}
-              >
-                <Trash2 className="size-4" aria-hidden />
-                Clear
-              </button>
-              <button
-                className="btn-ghost"
-                type="button"
-                onClick={forgetSavedConnection}
-                disabled={!selectedConnectionId}
-              >
-                <Trash2 className="size-4" aria-hidden />
-                Forget
-              </button>
-            </div>
-
-            <div className="mt-4 flex items-start gap-2 rounded-md border border-zinc-200 bg-zinc-50 p-3 text-sm text-zinc-800 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-100">
-              <UsersRound
-                className="mt-0.5 size-4 shrink-0 text-teal-700 dark:text-teal-300"
-                aria-hidden
-              />
-              <span>{activeScopeText}</span>
-            </div>
-
-            {account ? (
-              <div className="mt-4 rounded-md border border-teal-200 bg-teal-50 p-3 text-sm text-teal-950 dark:border-teal-800 dark:bg-teal-950/40 dark:text-teal-50">
-                <div className="flex items-center gap-2 font-semibold">
-                  <CheckCircle2 className="size-4" aria-hidden />
-                  Connected account
-                </div>
-                <dl className="mt-3 grid gap-2">
-                  <AccountLine
-                    label="Mode"
-                    value={account.is3pl ? "3PL" : "Brand"}
-                  />
-                  <AccountLine
-                    label="Email"
-                    value={account.email || "Not returned"}
-                  />
-                  <AccountLine
-                    label="Username"
-                    value={account.username || "Not returned"}
-                  />
-                  <AccountLine
-                    label="User ID"
-                    value={account.userId || "Not returned"}
-                  />
-                  <AccountLine
-                    label="Account ID"
-                    value={account.accountId || "Not returned"}
-                  />
-                  <AccountLine
-                    label="Customers"
-                    value={
-                      account.is3pl
-                        ? String(account.customers.length)
-                        : "Not a 3PL account"
-                    }
-                  />
-                  <AccountLine
-                    label="Request ID"
-                    value={account.requestId || "Not returned"}
-                  />
-                </dl>
-              </div>
-            ) : (
-              <div className="mt-4 flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-100">
-                <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden />
-                <span>
-                  Live mode stays locked until the refresh token is connected.
-                </span>
-              </div>
-            )}
-          </Panel>
-
           <Panel
             title="Run Settings"
             icon={<FileCheck2 className="size-4" aria-hidden />}
