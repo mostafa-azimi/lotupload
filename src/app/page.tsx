@@ -143,7 +143,6 @@ export default function Home() {
   const selectedCustomerAccountId = needsChildAccount
     ? childAccountId.trim() || selectedChildAccount?.id || ""
     : "";
-  const canContinueToTools = Boolean(account);
   const liveRunBlocked =
     !dryRun && (!account || (needsChildAccount && !selectedCustomerAccountId));
   const progressPercent = rows.length
@@ -364,16 +363,18 @@ export default function Home() {
   }
 
   function continueToTools() {
-    if (!account) {
-      setState("error");
-      setStatusText("Connect or choose a saved ShipHero account first.");
-      return;
-    }
-
     setShowConnectionScreen(false);
     setState("idle");
-    setStatusText(`${operation.title} selected.`);
-    addLog(`Using account scope: ${activeScopeText}.`);
+    setStatusText(
+      account
+        ? `${operation.title} selected.`
+        : "Viewing tools without a connected account. Live mode requires connection.",
+    );
+    addLog(
+      account
+        ? `Using account scope: ${activeScopeText}.`
+        : "Viewing tools without account connection.",
+    );
   }
 
   function switchConnection() {
@@ -863,12 +864,7 @@ export default function Home() {
       )}
 
       <div className="mt-4 flex flex-wrap justify-end gap-2">
-        <button
-          className="btn-primary"
-          type="button"
-          onClick={continueToTools}
-          disabled={!canContinueToTools}
-        >
+        <button className="btn-primary" type="button" onClick={continueToTools}>
           <CheckCircle2 className="size-4" aria-hidden />
           Continue to tools
         </button>
